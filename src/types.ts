@@ -18,6 +18,41 @@ export type StockNode = {
   riskScore?: number;
   trumpBeta?: number;
   lastUpdated: string;
+  // Persona Specifics
+  ipoStatus?: 'pre' | 'imminent' | 'public' | 'na';
+  aiStrength?: number; // 0-10
+  macroBeta?: number; // Correlation to global macro shifts
+  momentumSignal?: 'accumulation' | 'breakout' | 'distribution' | 'neutral';
+};
+
+export type FinanceEvent = {
+  type: 'AIS_ALERT' | 'AERO_ALERT' | 'CRYPTO_NODE' | 'MARKET_CATALYST' | 'SYSTEM' | 'MACRO_PULSE' | 'GEOPOLITICAL';
+  label: string;
+  lat?: number;
+  lon?: number;
+  severity: 'info' | 'success' | 'warn' | 'danger';
+  symbol?: string;
+  timestamp: string;
+  source?: 'BLOOMBERG' | 'IMF' | 'ROUTERS' | 'GEO_INT';
+};
+
+export type AISNode = {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  status: string;
+  type: 'tanker' | 'container' | 'cargo';
+  dest: string;
+};
+
+export type SatelliteNode = {
+  id: string;
+  name: string;
+  operator: string;
+  lat: number;
+  lon: number;
+  orbitType: string;
 };
 
 export const MOCK_STOCKS: StockNode[] = [
@@ -40,7 +75,11 @@ export const MOCK_STOCKS: StockNode[] = [
     revenueCagr5y: 28,
     riskScore: 6,
     trumpBeta: 9,
-    lastUpdated: new Date().toISOString()
+    lastUpdated: new Date().toISOString(),
+    ipoStatus: 'public',
+    aiStrength: 9.8,
+    macroBeta: 2.1,
+    momentumSignal: 'breakout'
   },
   {
     ticker: "RKLB",
@@ -166,6 +205,105 @@ export const MOCK_STOCKS: StockNode[] = [
     revenueCagr5y: 45,
     riskScore: 7,
     trumpBeta: 5,
-    lastUpdated: new Date().toISOString()
+    lastUpdated: new Date().toISOString()},
+  {
+    ticker: "DATABRICKS",
+    name: "Databricks Inc.",
+    country: "USA",
+    iso_code: "US",
+    lat: 37.77,
+    lon: -122.41,
+    exchange: "PRIVATE (NASDAQ EXPECTED)",
+    sector: "AI & Data",
+    themes: ["Enterprise AI", "AI Infrastructure"],
+    marketCap: 43e9,
+    price: 0,
+    change1d: 0,
+    change5d: 0,
+    volume: 0,
+    avg30dVolume: 0,
+    revenueCagr5y: 70,
+    riskScore: 4,
+    trumpBeta: 3,
+    lastUpdated: new Date().toISOString(),
+    ipoStatus: 'pre',
+    aiStrength: 9.5,
+    macroBeta: 1.2,
+    momentumSignal: 'accumulation'
+  },
+  {
+    ticker: "KLARNA",
+    name: "Klarna Bank AB",
+    country: "Sweden",
+    iso_code: "SE",
+    lat: 59.33,
+    lon: 18.06,
+    exchange: "PRIVATE",
+    sector: "Fintech",
+    themes: ["Enterprise AI", "Crypto Infra"],
+    marketCap: 15e9,
+    price: 0,
+    change1d: 0,
+    change5d: 0,
+    volume: 0,
+    avg30dVolume: 0,
+    revenueCagr5y: 25,
+    riskScore: 7,
+    trumpBeta: 5,
+    lastUpdated: new Date().toISOString(),
+    ipoStatus: 'imminent',
+    aiStrength: 7.2,
+    macroBeta: 1.8,
+    momentumSignal: 'neutral'
+  },
+  {
+    ticker: "NESN",
+    name: "Nestle SA",
+    country: "Switzerland",
+    iso_code: "CH",
+    lat: 46.46,
+    lon: 6.84,
+    exchange: "SIX Swiss",
+    sector: "Consumer",
+    themes: ["Energy"],
+    marketCap: 280e9,
+    price: 84.50,
+    change1d: -0.2,
+    change5d: -1.5,
+    volume: 5e6,
+    avg30dVolume: 4.5e6,
+    revenueCagr5y: 4,
+    riskScore: 2,
+    trumpBeta: 1,
+    lastUpdated: new Date().toISOString(),
+    ipoStatus: 'public',
+    aiStrength: 2.5,
+    macroBeta: 0.9,
+    momentumSignal: 'neutral'
+  },
+  {
+    ticker: "UBSG",
+    name: "UBS Group AG",
+    country: "Switzerland",
+    iso_code: "CH",
+    lat: 47.37,
+    lon: 8.54,
+    exchange: "SIX Swiss",
+    sector: "Financial",
+    themes: ["Crypto Infra"],
+    marketCap: 95e9,
+    price: 28.15,
+    change1d: 0.8,
+    change5d: 2.4,
+    volume: 10e6,
+    avg30dVolume: 12e6,
+    revenueCagr5y: 8,
+    riskScore: 5,
+    trumpBeta: 4,
+    lastUpdated: new Date().toISOString(),
+    ipoStatus: 'public',
+    aiStrength: 6.5,
+    macroBeta: 1.4,
+    momentumSignal: 'accumulation'
   }
 ];

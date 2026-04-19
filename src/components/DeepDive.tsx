@@ -9,7 +9,8 @@ import {
   ExternalLink,
   Target,
   FlaskConical,
-  Zap
+  Zap,
+  Globe
 } from 'lucide-react';
 
 interface DeepDiveProps {
@@ -64,19 +65,42 @@ export default function DeepDive({ stock, onClose }: DeepDiveProps) {
             </div>
           </div>
 
-          {/* Sparkline Mock */}
-          <div className="flex items-end gap-1 h-10 mt-4 overflow-hidden opacity-80">
-            {[20, 45, 30, 65, 55, 80, 95, 75, 90, 85].map((h, i) => (
-              <div 
-                key={i} 
-                className="flex-1 rounded-t-sm transition-all" 
-                style={{ 
-                  height: `${h}%`,
-                  backgroundColor: stock.change1d >= 0 ? '#00FF41' : '#FF3131',
-                  opacity: 0.3 + (i / 20)
-                }} 
-              />
-            ))}
+          {/* Pre-Mover Intel Section */}
+          <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-terminal-line/50">
+            <div className="bg-black/30 p-2 border border-terminal-line rounded-sm">
+                <div className="flex items-center gap-1.5 mb-1">
+                   <Target size={11} className="text-terminal-gold" />
+                   <span className="text-[8px] text-terminal-text-secondary uppercase font-bold">IPO_Status</span>
+                </div>
+                <span className={cn(
+                    "text-[10px] font-black uppercase tracking-tight",
+                    stock.ipoStatus === 'pre' ? "text-terminal-gold" : "text-white"
+                )}>{stock.ipoStatus?.replace('_', ' ') || 'ANALYSIS'}</span>
+            </div>
+            <div className="bg-black/30 p-2 border border-terminal-line rounded-sm">
+                <div className="flex items-center gap-1.5 mb-1">
+                   <Zap size={11} className="text-terminal-cyan" />
+                   <span className="text-[8px] text-terminal-text-secondary uppercase font-bold">AI_Bubble_Risk</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                    <span className="text-[12px] font-black text-terminal-cyan">{stock.aiStrength || '0'}</span>
+                    <span className="text-[8px] opacity-40">/ 10</span>
+                </div>
+            </div>
+            <div className="bg-black/30 p-2 border border-terminal-line rounded-sm">
+                <div className="flex items-center gap-1.5 mb-1">
+                   <Globe size={11} className="text-terminal-cyan" />
+                   <span className="text-[8px] text-terminal-text-secondary uppercase font-bold">Macro_β</span>
+                </div>
+                <span className="text-[12px] font-black text-zinc-200">{stock.macroBeta || '1.0'}</span>
+            </div>
+            <div className="bg-black/30 p-2 border border-terminal-line rounded-sm">
+                <div className="flex items-center gap-1.5 mb-1">
+                   <BarChart3 size={11} className="text-terminal-green" />
+                   <span className="text-[8px] text-terminal-text-secondary uppercase font-bold">Momentum</span>
+                </div>
+                <span className="text-[10px] font-black uppercase text-terminal-green">{stock.momentumSignal || 'STEADY'}</span>
+            </div>
           </div>
         </div>
 

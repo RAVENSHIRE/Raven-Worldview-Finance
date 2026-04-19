@@ -1,21 +1,27 @@
-import { useState, useMemo } from 'react';
-import { MOCK_STOCKS, StockNode } from './types';
+import { useState, useMemo, useEffect } from 'react';
+import { MOCK_STOCKS, StockNode, FinanceEvent } from './types';
+import PreMoverScorecard from './components/PreMoverScorecard';
 import GlobeViewport from './components/GlobeViewport';
 import FlatViewport from './components/FlatViewport';
 import EquityMonitor from './components/EquityMonitor';
 import DeepDive from './components/DeepDive';
+import LiveFeedSidebar from './components/LiveFeedSidebar';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
-  Cpu,
-  Coins,
-  Wind,
-  ShieldCheck,
-  Globe,
-  Map as MapIcon,
-  Zap,
-  Activity
+  Cpu, 
+  Coins, 
+  Wind, 
+  ShieldCheck, 
+  Globe, 
+  Map as MapIcon, 
+  Zap, 
+  Activity,
+  Bell,
+  Box,
+  LayoutGrid,
+  Layers
 } from 'lucide-react';
 
 export default function App() {
@@ -24,6 +30,24 @@ export default function App() {
   const [colorMode, setColorMode] = useState<'change' | 'trump_beta'>('change');
   const [viewMode, setViewMode] = useState<'globe' | 'flat'>('globe');
   const [searchQuery, setSearchQuery] = useState('');
+  const [events, setEvents] = useState<FinanceEvent[]>([]);
+
+  // WebSocket Integration for Real-Time Finance Pulse
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+
+    ws.onmessage = (message) => {
+      try {
+        const event = JSON.parse(message.data) as FinanceEvent;
+        setEvents(prev => [event, ...prev].slice(0, 50));
+      } catch (e) {
+        console.error("Pulse Sync Error", e);
+      }
+    };
+
+    return () => ws.close();
+  }, []);
 
   // 1. Quant Scoring / Computed Fields (Verifiable logic)
   const processedStocks = useMemo(() => {
@@ -61,188 +85,197 @@ export default function App() {
   ];
 
   return (
-    <div className="grid grid-rows-[48px_1fr_180px] grid-cols-[220px_1fr_240px] h-screen w-screen overflow-hidden bg-terminal-bg font-mono">
-      {/* Header (Simplified Bloomberg Style) */}
+    <div className="grid grid-rows-[48px_1fr_180px] grid-cols-[220px_1fr_300px] h-screen w-screen overflow-hidden bg-terminal-bg font-mono">
+      {/* Header */}
       <header className="col-span-3 border-b border-terminal-line bg-terminal-panel flex items-center justify-between px-5 z-50 shadow-lg">
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Activity className="text-terminal-cyan animate-pulse" size={18} />
-            <span className="font-black tracking-widest text-[13px] text-white uppercase">
-              FINANCE-<span className="text-terminal-cyan text-[14px]">WORLDVIEW</span> <span className="text-[10px] opacity-40">v1.0_BETA</span>
+          <div className="flex items-center gap-2 group cursor-pointer">
+            <div className="p-1 bg-terminal-cyan/10 rounded-sm">
+              <Activity className="text-terminal-cyan animate-pulse" size={16} />
+            </div>
+            <span className="font-black tracking-widest text-[12px] text-white uppercase group-hover:text-terminal-cyan transition-colors">
+              FINANCE-<span className="text-terminal-cyan">WORLDVIEW</span> <span className="text-[9px] opacity-30 font-normal">X-STREAM v1.0</span>
             </span>
           </div>
-          <div className="h-4 w-px bg-terminal-line" />
-          <div className="flex gap-1 p-0.5 bg-black border border-terminal-line rounded-sm">
+          
+          <div className="h-4 w-px bg-terminal-line mx-2" />
+          
+          <div className="flex gap-1 p-0.5 bg-black/40 border border-terminal-line rounded-sm">
             <button 
               onClick={() => setViewMode('globe')}
               className={cn("p-1 transition-all rounded-[1px]", viewMode === 'globe' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
-              title="Globe Mode"
+              title="3D View"
             >
-              <Globe size={14} />
+              <Globe size={13} />
             </button>
             <button 
               onClick={() => setViewMode('flat')}
               className={cn("p-1 transition-all rounded-[1px]", viewMode === 'flat' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
-              title="Flat Mode"
+              title="Flat Map"
             >
-              <MapIcon size={14} />
+              <MapIcon size={13} />
             </button>
           </div>
         </div>
 
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-1 bg-black rounded-sm p-0.5 border border-terminal-line">
+          <div className="flex items-center gap-1 bg-black/40 rounded-sm p-0.5 border border-terminal-line">
             <button 
               onClick={() => setColorMode('change')}
               className={cn("px-2 py-0.5 text-[9px] rounded-sm transition-colors uppercase font-bold", colorMode === 'change' ? "bg-zinc-800 text-white" : "text-terminal-text-secondary hover:text-white")}
-            >1D Delta</button>
+            >1D PERFORMANCE</button>
             <button 
               onClick={() => setColorMode('trump_beta')}
               className={cn("px-2 py-0.5 text-[9px] rounded-sm transition-colors uppercase font-bold", colorMode === 'trump_beta' ? "bg-zinc-800 text-white" : "text-terminal-text-secondary hover:text-white")}
-            >Trump Beta</button>
+            >MACRO_BETA</button>
           </div>
+          
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-terminal-text-secondary" size={12} />
             <input 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="GEO_TICKER_X..."
-              className="terminal-input pl-8 w-44 placeholder:text-zinc-700"
+              placeholder="SEARCH_GEO_TICKER..."
+              className="terminal-input pl-8 w-44 placeholder:text-zinc-800"
             />
+          </div>
+
+          <div className="flex gap-4 items-center">
+            <Bell size={14} className="text-zinc-600 hover:text-terminal-gold cursor-pointer transition-colors" />
+            <Box size={14} className="text-zinc-600 hover:text-terminal-cyan cursor-pointer transition-colors" />
           </div>
         </div>
       </header>
 
-      {/* Left Rail: Filters, Themes, Exchanges */}
-      <aside className="border-r border-terminal-line bg-terminal-panel flex flex-col p-4 shadow-2xl z-10 overflow-y-auto no-scrollbar">
-        <span className="section-label">Thematic Heatmap</span>
-        <div className="space-y-2 mb-8">
-          {themes.map(t => (
-            <button
-              key={t.name}
-              onClick={() => setActiveTheme(activeTheme === t.name ? null : t.name)}
-              className={cn(
-                "w-full flex items-center justify-between p-2.5 rounded-sm border transition-all text-left group",
-                activeTheme === t.name 
-                  ? "bg-terminal-cyan/10 border-terminal-cyan text-terminal-cyan" 
-                  : "bg-black/20 border-terminal-line text-zinc-500 hover:text-zinc-200 hover:bg-white/5"
-              )}
-            >
-              <div className="flex items-center gap-2.5">
-                <t.icon size={15} className={cn(activeTheme === t.name ? "text-terminal-cyan" : "text-zinc-600 group-hover:text-terminal-cyan")} />
-                <span className="text-[10px] uppercase font-bold tracking-tight">{t.name}</span>
-              </div>
-              <span className="text-[9px] font-mono opacity-40">{t.count}</span>
-            </button>
-          ))}
-        </div>
-
-        <span className="section-label">Global Tier-1 Exchanges</span>
-        <div className="space-y-1 flex-1">
-          {['NASDAQ-GS', 'NYSE-ARCA', 'EURONEXT-AMS', 'HKEX-MAIN', 'LSE-OFF'].map(ex => (
-            <div key={ex} className="flex items-center justify-between py-1.5 border-b border-terminal-line/40 text-[9px] text-zinc-600 hover:text-terminal-cyan transition-all cursor-pointer group">
-              <span className="tracking-tighter">{ex}</span>
-              <div className="w-1 h-1 rounded-full bg-zinc-800 group-hover:bg-terminal-cyan shadow-[0_0_5px_rgba(0,224,255,0.3)]" />
+      {/* Left Rail: Thematic Heat & Context */}
+      <aside className="border-r border-terminal-line bg-terminal-panel flex flex-col p-4 z-10 overflow-hidden select-none">
+        <div className="flex-1 overflow-hidden flex flex-col gap-4">
+            <div className="flex-1 overflow-y-auto no-scrollbar">
+                <div className="flex items-center gap-2 mb-4">
+                  <LayoutGrid size={12} className="text-terminal-cyan" />
+                  <span className="section-label !mb-0">Thematic Heatmap</span>
+                </div>
+                
+                <div className="space-y-1">
+                  {themes.map(t => (
+                    <button
+                      key={t.name}
+                      onClick={() => setActiveTheme(activeTheme === t.name ? null : t.name)}
+                      className={cn(
+                        "w-full flex items-center justify-between p-2.5 rounded-sm border transition-all text-left group mb-1",
+                        activeTheme === t.name 
+                          ? "bg-terminal-cyan/10 border-terminal-cyan text-terminal-cyan" 
+                          : "bg-black/20 border-terminal-line text-zinc-500 hover:text-zinc-200 hover:bg-white/5"
+                      )}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <t.icon size={14} className={cn(activeTheme === t.name ? "text-terminal-cyan" : "text-zinc-700 group-hover:text-terminal-cyan")} />
+                        <span className="text-[10px] uppercase font-bold tracking-tight">{t.name}</span>
+                      </div>
+                      <span className="text-[9px] font-mono opacity-30">{t.count}</span>
+                    </button>
+                  ))}
+                </div>
             </div>
-          ))}
+
+            <div className="flex-[1.5] overflow-hidden">
+                <PreMoverScorecard stocks={processedStocks} />
+            </div>
         </div>
 
-        <div className="mt-8 pt-4 border-t border-terminal-line/50">
-          <div className="flex items-center justify-between text-[9px] text-zinc-500 mb-2 font-bold">
-            <span>GEO_FEED_STATUS</span>
-            <span className="text-terminal-green flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-terminal-green animate-pulse" /> SYNCED</span>
-          </div>
-          <div className="w-full h-1 bg-black border border-terminal-line rounded-full overflow-hidden">
-            <motion.div 
-              animate={{ x: [-100, 200] }}
-              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-              className="w-1/4 h-full bg-terminal-cyan opacity-60 shadow-[0_0_10px_#00E0FF]" 
-            />
+        <div className="mt-auto space-y-4">
+           <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Layers size={11} className="text-zinc-500" />
+                <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest">Active Layers</span>
+              </div>
+              <div className="space-y-2">
+                 {['AIS Corridors', 'Aerospace Tracker', 'Crypto Nodes'].map(layer => (
+                   <div key={layer} className="flex items-center justify-between text-[10px] text-zinc-600">
+                      <span>{layer}</span>
+                      <div className="w-6 h-3 bg-terminal-cyan/20 border border-terminal-cyan/40 rounded-full relative">
+                        <div className="absolute right-0.5 top-0.5 w-2 h-2 bg-terminal-cyan rounded-full shadow-[0_0_8px_#00E0FF]" />
+                      </div>
+                   </div>
+                 ))}
+              </div>
+           </div>
+
+           <div className="pt-4 border-t border-terminal-line/50">
+            <div className="flex items-center justify-between text-[9px] text-zinc-600 mb-2 font-bold tracking-tighter">
+              <span>SYNC_PULSE_EST</span>
+              <span className="text-terminal-green flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-terminal-green animate-pulse" /> 0ms</span>
+            </div>
           </div>
         </div>
       </aside>
 
-      {/* Main Map Viewport (Dual-Engine: Globe/Flat) */}
-      <main className="relative bg-black overflow-hidden select-none">
+      {/* Primary Data Portal */}
+      <main className="relative bg-[#020202] overflow-hidden group">
         <AnimatePresence mode="wait">
-          {viewMode === 'globe' ? (
-            <motion.div 
-              key="globe"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.02 }}
-              transition={{ duration: 0.4 }}
-              className="w-full h-full"
-            >
+          <motion.div 
+            key={viewMode}
+            initial={{ opacity: 0, scale: 0.99 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.01 }}
+            transition={{ duration: 0.4 }}
+            className="w-full h-full"
+          >
+            {viewMode === 'globe' ? (
               <GlobeViewport 
                 stocks={filteredStocks} 
+                events={events}
                 onSelectStock={setSelectedStock} 
                 selectedStock={selectedStock}
                 colorMode={colorMode}
               />
-            </motion.div>
-          ) : (
-            <motion.div 
-              key="flat"
-              initial={{ opacity: 0, scale: 1.02 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.4 }}
-              className="w-full h-full"
-            >
-              <FlatViewport 
-                stocks={filteredStocks} 
-                onSelectStock={setSelectedStock} 
-                selectedStock={selectedStock}
-                colorMode={colorMode}
-              />
-            </motion.div>
-          )}
+            ) : (
+                <FlatViewport 
+                  stocks={filteredStocks}
+                  events={events}
+                  onSelectStock={setSelectedStock} 
+                  selectedStock={selectedStock}
+                  colorMode={colorMode}
+                />
+            )}
+          </motion.div>
         </AnimatePresence>
-        
-        {/* Floating Indicator */}
-        <div className="absolute top-6 left-6 pointer-events-none">
-           <div className="stat-card bg-black/60 border-terminal-line/80 backdrop-blur-md mb-0 py-2 px-3">
-              <span className="section-label !mb-1">Active Engine</span>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-terminal-cyan shadow-[0_0_10px_#00E0FF] animate-pulse" />
-                <span className="text-[11px] font-bold text-white uppercase tracking-widest">{viewMode}_LAYER</span>
+
+        {/* Global HUD Overlays */}
+        <div className="absolute top-6 left-6 pointer-events-none select-none">
+           <div className="stat-card bg-black/60 border-terminal-line/80 backdrop-blur-xl mb-0 py-2.5 px-4 shadow-2xl">
+              <span className="text-[8px] text-terminal-text-secondary uppercase tracking-[0.2em] mb-1.5 block font-bold">Situational Engine</span>
+              <div className="flex items-center gap-3">
+                <div className="w-2.5 h-2.5 rounded-full bg-terminal-cyan shadow-[0_0_12px_#00E0FF] animate-pulse" />
+                <span className="text-[12px] font-black text-white uppercase tracking-widest">{activeTheme || 'Global_Mode'}</span>
               </div>
            </div>
         </div>
-
-        {/* View Mode Context Menu */}
-        <div className="absolute top-6 right-6 flex flex-col gap-2">
-          <div className="bg-black/70 border border-terminal-line p-2 rounded-sm backdrop-blur-md">
-            <div className="text-[8px] text-zinc-500 font-bold mb-1 uppercase tracking-tighter">Situational Awareness</div>
-            <div className="flex items-center gap-2">
-              <Zap size={10} className="text-terminal-cyan" />
-              <span className="text-[9px] text-zinc-100 font-mono">DEREGULATION_ALPHA: ACTIVE</span>
-            </div>
-          </div>
-        </div>
       </main>
 
-      {/* Right Detail Rail (Insight Drawer) */}
-      <aside className="border-l border-terminal-line bg-terminal-panel flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)] z-10 overflow-hidden">
-        <div className="flex-1 overflow-y-auto no-scrollbar">
-          <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
+      {/* Right Rail: Intelligence Pulse & Details */}
+      <aside className="border-l border-terminal-line bg-terminal-panel flex flex-col shadow-[-20px_0_40px_rgba(0,0,0,0.6)] z-20 overflow-hidden">
+        <div className="flex-1 overflow-y-auto no-scrollbar border-b border-terminal-line">
+           <LiveFeedSidebar events={events} />
+        </div>
+        <div className="h-[240px] flex flex-col bg-black/40 overflow-hidden">
+           <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
         </div>
       </aside>
 
-      {/* Bottom Data Grid (Equity Monitor / Ticker Tape) */}
-      <footer className="col-span-3 grid grid-cols-[220px_1fr_240px] border-t-2 border-terminal-line bg-terminal-bg overflow-hidden shadow-[0_-5px_20px_rgba(0,0,0,0.5)]">
-        <div className="border-r border-terminal-line p-4 flex flex-col justify-center bg-black/20">
-            <span className="section-label !mb-1 text-terminal-text-secondary">MACRO_INDEX</span>
-            <div className="flex items-center justify-between group cursor-help">
-              <span className="text-[11px] text-white font-bold group-hover:text-terminal-cyan">C-BETA INDEX</span>
+      {/* Bottom Grid / Terminal */}
+      <footer className="col-span-3 grid grid-cols-[220px_1fr_300px] border-t-2 border-terminal-line bg-terminal-bg overflow-hidden shadow-[0_-10px_30px_rgba(0,0,0,0.5)]">
+        <div className="border-r border-terminal-line p-4 flex flex-col justify-center bg-black/10">
+            <span className="text-[9px] text-terminal-text-secondary uppercase mb-2 font-black tracking-widest opacity-60">Macro_Regime</span>
+            <div className="flex items-center justify-between group cursor-default">
+              <span className="text-[11px] text-zinc-300 font-bold group-hover:text-terminal-cyan transition-colors italic">DEREG_INDEX_X1</span>
               <div className="flex flex-col items-end">
-                <span className="text-[12px] text-terminal-green font-black">9.24</span>
-                <span className="text-[9px] text-terminal-green/60 font-mono tracking-tighter uppercase">Extreme Bullish</span>
+                <span className="text-[13px] text-terminal-green font-black">HIGH_VOL</span>
+                <span className="text-[8px] text-terminal-green/50 font-mono tracking-widest uppercase">Accumulation Phase</span>
               </div>
             </div>
         </div>
-        <div className="flex flex-col bg-black/40 relative overflow-hidden group">
+        <div className="flex flex-col bg-black/20 relative group">
           <EquityMonitor 
             stocks={filteredStocks.sort((a, b) => b.change1d - a.change1d)} 
             onSelectStock={setSelectedStock} 
@@ -250,11 +283,14 @@ export default function App() {
           />
         </div>
         <div className="border-l border-terminal-line p-4 flex flex-col gap-2 bg-terminal-panel/50">
-           <span className="section-label !mb-0 text-terminal-text-secondary flex items-center gap-2"><div className="w-1 h-1 bg-terminal-cyan rounded-full" /> INTEL_LOG</span>
-           <div className="flex-1 bg-black/40 border border-terminal-line/50 rounded-sm p-3 overflow-hidden text-[10px] font-mono leading-snug text-terminal-cyan/80 select-none cursor-default max-h-[100px]">
-              <div className="flex gap-2 mb-1"><span className="text-zinc-600">[08:24]</span> <span className="text-terminal-green">SIGNAL</span> PLTR volume breakout confirmed.</div>
-              <div className="flex gap-2 mb-1"><span className="text-zinc-600">[08:22]</span> <span className="text-terminal-gold">THEME</span> Crypto Infra heat increasing (+4.2%).</div>
-              <div className="flex gap-2"><span className="text-zinc-600">[08:15]</span> <span className="text-terminal-cyan">GEO</span> Syncing HKEX listing nodes...</div>
+           <span className="section-label !mb-0 text-terminal-text-secondary flex items-center gap-2"><div className="w-1 h-1 bg-terminal-cyan rounded-full animate-ping" /> Alert_Log</span>
+           <div className="flex-1 bg-black/60 border border-terminal-line/40 rounded-sm p-3 overflow-hidden text-[9px] font-mono leading-relaxed text-terminal-cyan/70 select-none">
+              {events.slice(0, 3).map((e, i) => (
+                <div key={i} className="mb-1">
+                   <span className="text-zinc-600">[{new Date(e.timestamp).toLocaleTimeString([], { hour12: false })}]</span> {e.label}
+                </div>
+              ))}
+              {events.length === 0 && <div className="opacity-40 italic">Waiting for situational data...</div>}
            </div>
         </div>
       </footer>

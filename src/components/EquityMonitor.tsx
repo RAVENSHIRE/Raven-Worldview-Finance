@@ -22,6 +22,8 @@ export default function EquityMonitor({ stocks, onSelectStock, selectedStock }: 
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-right">1D %</th>
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-right">5D %</th>
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-right">Surge</th>
+              <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium">IPO_Stat</th>
+              <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-center">AI_Str</th>
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium">Signal</th>
             </tr>
           </thead>
@@ -66,6 +68,15 @@ export default function EquityMonitor({ stocks, onSelectStock, selectedStock }: 
                   </td>
                   <td className="px-4 py-2 text-right text-terminal-cyan">
                     {surge}x
+                  </td>
+                  <td className={cn(
+                    "px-4 py-2 uppercase font-black tracking-tighter text-[10px]",
+                    stock.ipoStatus === 'pre' ? "text-terminal-gold" : "text-white"
+                  )}>
+                    {stock.ipoStatus || 'PUBLIC'}
+                  </td>
+                  <td className="px-4 py-2 text-center text-terminal-cyan font-bold">
+                    {stock.aiStrength !== undefined ? stock.aiStrength : '---'}
                   </td>
                   <td className="px-4 py-2">
                     {isBreakout ? (
