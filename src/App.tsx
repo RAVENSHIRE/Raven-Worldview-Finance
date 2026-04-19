@@ -5,9 +5,9 @@ import GlobeViewport from './components/GlobeViewport';
 import FlatViewport from './components/FlatViewport';
 import EquityMonitor from './components/EquityMonitor';
 import LiveFeedSidebar from './components/LiveFeedSidebar';
-import GalaxyCluster from './components/GalaxyCluster';
 import AIChat from './components/AIChat';
 import Mirofish from './components/Mirofish';
+import DeepDive from './components/DeepDive';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -19,7 +19,8 @@ import {
   ChevronRight,
   ShieldAlert,
   Terminal,
-  RefreshCw
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 
 export default function App() {
@@ -30,19 +31,27 @@ export default function App() {
   const [events, setEvents] = useState<FinanceEvent[]>([]);
   const [activeLayers, setActiveLayers] = useState<string[]>(['AIS Corridors', 'Aerospace Tracker', 'Crypto Nodes']);
   const [liveQuotes, setLiveQuotes] = useState<Record<string, any>>({});
-  const [activeTab, setActiveTab] = useState<'monitor' | 'galaxy'>('monitor');
+  const [activeTab, setActiveTab] = useState<'monitor' | 'analysis'>('monitor');
   const [showSignals, setShowSignals] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [syncError, setSyncError] = useState<{ code: string; message: string } | null>(null);
 
   const fetchBatch = useCallback(async () => {
     setIsRefreshing(true);
+    setSyncError(null);
     const symbols = MOCK_STOCKS.filter(s => s.exchange !== 'PRIVATE').map(s => s.ticker).join(',');
     try {
       const res = await fetch(`/api/market/batch?symbols=${symbols}`);
       const data = await res.json();
-      setLiveQuotes(prev => ({ ...prev, ...data }));
+      
+      if (!res.ok) {
+        setSyncError({ code: data.error, message: data.details || 'Sync Failed' });
+      } else {
+        setLiveQuotes(prev => ({ ...prev, ...data }));
+      }
     } catch (e) {
       console.error("Real-Market Sync Failure", e);
+      setSyncError({ code: 'NETWORK_ERROR', message: 'Unable to reach sync bridge.' });
     } finally {
       // Small timeout to show the animation bit longer for better UX feedback
       setTimeout(() => setIsRefreshing(false), 800);
@@ -188,6 +197,18 @@ export default function App() {
 
       {/* Left Rail: Optimized for Pre-Mover IQ */}
       <aside className="border-r border-terminal-line bg-terminal-panel flex flex-col p-4 z-10 overflow-hidden select-none gap-4">
+        {syncError && (
+          <div className="bg-terminal-red/10 border border-terminal-red/40 p-3 mb-2 rounded-sm flex flex-col gap-1 items-start relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-1 opacity-20 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setSyncError(null)}>
+              <Activity size={10} className="rotate-45" />
+            </div>
+            <div className="flex items-center gap-2 text-terminal-red">
+               <AlertCircle size={12} className="shrink-0" />
+               <span className="text-[10px] font-black uppercase tracking-widest">{syncError.code}</span>
+            </div>
+            <p className="text-[8px] text-white/50 leading-tight uppercase font-mono">{syncError.message}</p>
+          </div>
+        )}
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
             <div className="flex-[0.6] min-h-[220px]">
                 <PreMoverScorecard stocks={processedStocks} />
@@ -279,27 +300,13 @@ export default function App() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Dynamic Context Workspace: Dual View (Monitor / Galaxy) */}
+        {/* Dynamic Context Workspace: Single Deep Monitor View */}
         <div className="absolute bottom-0 left-0 right-0 h-[35%] bg-terminal-bg/95 backdrop-blur-md border-t border-terminal-line z-20 flex flex-col pointer-events-auto">
             <div className="flex items-center gap-4 px-4 py-2 border-b border-terminal-line bg-terminal-panel/30">
-                <button 
-                  onClick={() => setActiveTab('monitor')}
-                  className={cn(
-                    "px-3 py-1 text-[9px] font-black uppercase tracking-widest border transition-all",
-                    activeTab === 'monitor' ? "bg-terminal-cyan text-black border-terminal-cyan" : "text-terminal-text-secondary border-terminal-line hover:border-terminal-cyan"
-                  )}
-                >
-                  Monitor_Node
-                </button>
-                <button 
-                  onClick={() => setActiveTab('galaxy')}
-                  className={cn(
-                    "px-3 py-1 text-[9px] font-black uppercase tracking-widest border transition-all",
-                    activeTab === 'galaxy' ? "bg-terminal-gold text-black border-terminal-gold" : "text-terminal-text-secondary border-terminal-line hover:border-terminal-gold"
-                  )}
-                >
-                  Galaxy_Cluster
-                </button>
+                <div className="flex items-center gap-2">
+                    <Activity size={10} className="text-terminal-cyan" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-terminal-cyan">Monitor_Node_Active</span>
+                </div>
                 <div className="h-4 w-px bg-terminal-line" />
                 <div className="flex items-center gap-2">
                     <span className="text-[8px] text-terminal-text-secondary uppercase">Signals:</span>
@@ -319,38 +326,12 @@ export default function App() {
             </div>
 
             <div className="flex-1 min-h-0 overflow-hidden p-2">
-              <AnimatePresence mode="wait">
-                {activeTab === 'monitor' ? (
-                  <motion.div 
-                    key="monitor-tab"
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 10 }}
-                    className="h-full"
-                  >
-                    <EquityMonitor 
-                      stocks={filteredStocks} 
-                      onSelectStock={setSelectedStock} 
-                      selectedStock={selectedStock}
-                      showSignals={showSignals}
-                    />
-                  </motion.div>
-                ) : (
-                  <motion.div 
-                    key="galaxy-tab"
-                    initial={{ opacity: 0, x: 10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -10 }}
-                    className="h-full"
-                  >
-                    <GalaxyCluster 
-                      stocks={filteredStocks} 
-                      onSelectStock={setSelectedStock} 
-                      selectedStock={selectedStock}
-                    />
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                <EquityMonitor 
+                  stocks={filteredStocks} 
+                  onSelectStock={setSelectedStock} 
+                  selectedStock={selectedStock}
+                  showSignals={showSignals}
+                />
             </div>
         </div>
 
@@ -372,7 +353,11 @@ export default function App() {
              <AIChat selectedStock={selectedStock} swarmMessages={swarmMessages} />
          </div>
          <div className="flex-1 overflow-hidden h-1/2">
-             <Mirofish selectedStock={selectedStock} />
+             {selectedStock ? (
+                 <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
+             ) : (
+                 <Mirofish selectedStock={selectedStock} />
+             )}
          </div>
       </aside>
 

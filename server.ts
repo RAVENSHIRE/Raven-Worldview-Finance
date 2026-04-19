@@ -117,9 +117,23 @@ async function startServer() {
             map[(results as any).symbol] = processQuote(results);
         }
         res.json(map);
-    } catch (e) {
+    } catch (e: any) {
         console.error("Batch Market API Error:", e);
-        res.status(500).json({ error: "UNABLE_TO_FETCH_BATCH_DATA" });
+        
+        let errorStatus = 500;
+        let errorMessage = "UNABLE_TO_FETCH_BATCH_DATA";
+
+        if (e.name === 'YahooFinanceError') {
+            if (e.message.includes('Too Many Requests') || e.code === 'TooManyRequestsError' || e.statusCode === 429) {
+                errorStatus = 429;
+                errorMessage = "API_RATE_LIMITED";
+            } else if (e.message.includes('Not Found') || e.statusCode === 404) {
+                errorStatus = 404;
+                errorMessage = "INVALID_SYMBOL_IN_BATCH";
+            }
+        }
+
+        res.status(errorStatus).json({ error: errorMessage, details: e.message });
     }
   });
 
@@ -127,9 +141,49 @@ async function startServer() {
     try {
         const result = await yahooFinance.quote(req.params.symbol);
         res.json(result);
-    } catch (e) {
+    } catch (e: any) {
         console.error("Market API Error:", e);
-        res.status(500).json({ error: "UNABLE_TO_FETCH_REAL_TIME_DATA" });
+        
+        let errorStatus = 500;
+        let errorMessage = "UNABLE_TO_FETCH_REAL_TIME_DATA";
+
+        if (e.name === 'YahooFinanceError') {
+            if (e.message.includes('Too Many Requests') || e.code === 'TooManyRequestsError' || e.statusCode === 429) {
+                errorStatus = 429;
+                errorMessage = "API_RATE_LIMITED";
+            } else if (e.message.includes('Not Found') || e.statusCode === 404) {
+                errorStatus = 404;
+                errorMessage = "INVALID_SYMBOL";
+            }
+        }
+
+        res.status(errorStatus).json({ error: errorMessage, details: e.message });
+    }
+  });
+
+  app.get("/api/market/history/:symbol", async (req, res) => {
+    try {
+        const symbol = req.params.symbol;
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setFullYear(endDate.getFullYear() - 1);
+
+        const result = await yahooFinance.chart(symbol, {
+            period1: startDate,
+            interval: '1d'
+        });
+        
+        // Return simplified series for Recharts
+        const chartData = result.quotes.map((q: any) => ({
+            date: new Date(q.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+            fullDate: q.date,
+            price: q.close
+        })).filter((q: any) => q.price !== null);
+
+        res.json(chartData);
+    } catch (e: any) {
+        console.error("History API Error:", e);
+        res.status(500).json({ error: "UNABLE_TO_FETCH_HISTORY", details: e.message });
     }
   });
 

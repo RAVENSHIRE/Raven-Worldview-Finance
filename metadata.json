@@ -1,6 +1,6 @@
 {
-  "name": "Finance-Worldview AI",
-  "description": "Geospatial intelligence dashboard for global equities. Features 3D globe (globe.gl) and flat (deck.gl) layers, real-time quant scoring, and macro-thematic overlays.",
+  "name": "Immersive Alpha",
+  "description": "Spatial finance platform merging Bloomberg-grade data density with generative 3D visual storytelling. Features situational awareness globe, AI agent swarms, and high-fidelity asset deep dives.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["Geospatial Intelligence", "3D Visualization", "Quant Scoring"]
+  "majorCapabilities": ["Spatial Computing UI", "3D Data Visualization", "Generative AI Agents"]
 }

@@ -54,7 +54,7 @@ export default function FlatViewport({ stocks, events, activeLayers, onSelectSto
     if (activeLayers.includes('Crypto Nodes') || activeLayers.includes('AIS Corridors')) {
         l.push(new ScatterplotLayer({
             id: 'live-pulses',
-            data: events.filter(e => e.lat !== undefined),
+            data: events.filter(e => e.lat !== undefined && e.lon !== undefined),
             getPosition: (d: any) => [d.lon, d.lat],
             getFillColor: (d: any) => {
                 switch(d.severity) {

@@ -18,7 +18,8 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
   // Mock Shipping Corridors for Globe
   const ARCHS_DATA = [
     { startLat: 29.9, startLng: 32.5, endLat: 40.7, endLng: -74.0, name: 'Suez to NY Pipeline', color: '#00E0FF' },
-    { startLat: 1.3, startLng: 103.8, endLat: 34.0, endLng: -118.2, name: 'Malacca to Long Beach', color: '#D4AF37' }
+    { startLat: 1.3, startLng: 103.8, endLat: 34.0, endLng: -118.2, name: 'Malacca to Long Beach', color: '#D4AF37' },
+    { startLat: 40.4, startLng: -3.7, endLat: 40.7, endLng: -74.0, name: 'Madrid to NY Corridors', color: '#00E0FF' }
   ];
 
   useEffect(() => {
@@ -38,6 +39,29 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
       .arcDashInitialGap(() => Math.random() * 5)
       .arcDashAnimateTime(1000)
       .arcStroke(0.1)
+      // Hex Bin (Sector Heatmap)
+      .hexBinPointLat('lat')
+      .hexBinPointLng('lon')
+      .hexBinPointWeight(d => (d as StockNode).marketCap / 1e11)
+      .hexBinResolution(4)
+      .hexMargin(0.1)
+      .hexTopColor(() => '#00E0FF')
+      .hexSideColor(() => '#00E0FF22')
+      .hexLabel(d => {
+        const points = (d as any).points as StockNode[];
+        const sectorCount: Record<string, number> = {};
+        points.forEach(p => {
+            sectorCount[p.sector] = (sectorCount[p.sector] || 0) + 1;
+        });
+        const topSector = Object.entries(sectorCount).sort((a,b) => b[1] - a[1])[0]?.[0];
+        return `
+          <div style="background: rgba(0,0,0,0.8); padding: 8px; border: 1px solid #00E0FF; font-size: 9px; font-family: 'JetBrains Mono';">
+            <div style="color: #00E0FF; font-weight: 900; margin-bottom: 4px;">SECTOR_CLUSTER: ${topSector || 'MIXED'}</div>
+            <div style="opacity: 0.6;">CONVERGENCE_NODES: ${points.length}</div>
+            <div style="opacity: 0.6;">TICKERS: ${points.map(p => p.ticker).join(', ')}</div>
+          </div>
+        `;
+      })
       // Points
       .pointLat('lat')
       .pointLng('lon')
@@ -121,7 +145,8 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
 
   useEffect(() => {
     if (globeInstance.current) {
-      globeInstance.current.pointsData(activeLayers.includes('Signal Heatmap') ? stocks : []);
+      globeInstance.current.pointsData(activeLayers.includes('Signal Heatmap') ? [] : stocks);
+      globeInstance.current.hexBinPointsData(activeLayers.includes('Signal Heatmap') ? stocks : []);
     }
   }, [stocks, activeLayers]);
 
@@ -148,6 +173,23 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
         lng: selectedStock.lon, 
         altitude: 1.5 
       }, 1000);
+
+      // Trigger "Target Recognition" pulse on selection
+      const recognitionEvent: FinanceEvent = {
+          type: 'SYSTEM',
+          label: `TARGET_RECOGNITION: ${selectedStock.ticker}`,
+          lat: selectedStock.lat,
+          lon: selectedStock.lon,
+          severity: 'success',
+          timestamp: new Date().toISOString()
+      };
+      // We don't have direct access to setEvents here, but the globe will pick up 
+      // the selectedStock point and we can add a transient ring
+      const rings = globeInstance.current.ringsData();
+      globeInstance.current.ringsData([...rings, recognitionEvent]);
+      setTimeout(() => {
+          globeInstance.current.ringsData(globeInstance.current.ringsData().filter((r: any) => r !== recognitionEvent));
+      }, 3000);
     }
   }, [selectedStock]);
 
