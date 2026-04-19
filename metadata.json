@@ -1,0 +1,6 @@
+{
+  "name": "Finance-Worldview AI",
+  "description": "Geospatial intelligence dashboard for global equities. Features 3D globe (globe.gl) and flat (deck.gl) layers, real-time quant scoring, and macro-thematic overlays.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["Geospatial Intelligence", "3D Visualization", "Quant Scoring"]
+}

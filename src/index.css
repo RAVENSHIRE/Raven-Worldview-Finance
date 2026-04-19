@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Courier New', Courier, monospace;
+  
+  --color-terminal-bg: #0A0A0B;
+  --color-terminal-panel: #141416;
+  --color-terminal-line: #28282A;
+  --color-terminal-text-primary: #FFFFFF;
+  --color-terminal-text-secondary: #8E9299;
+  --color-terminal-green: #00FF41;
+  --color-terminal-red: #FF3131;
+  --color-terminal-cyan: #00E0FF;
+  --color-terminal-gold: #D4AF37;
+}
+
+@layer base {
+  body {
+    @apply bg-terminal-bg text-terminal-text-primary font-sans antialiased overflow-hidden;
+  }
+}
+
+@layer components {
+  .regime-badge {
+    @apply bg-[rgba(0,224,255,0.1)] border border-terminal-cyan text-terminal-cyan px-2 py-0.5 text-[10px] uppercase rounded-sm font-mono font-bold tracking-wider;
+  }
+  
+  .section-label {
+    @apply text-[10px] uppercase text-terminal-text-secondary font-mono tracking-widest mb-3 block;
+  }
+
+  .stat-card {
+    @apply bg-white/5 p-3 border border-terminal-line rounded-sm mb-3 transition-colors hover:bg-white/[0.08];
+  }
+
+  .terminal-input {
+    @apply bg-black border border-terminal-line rounded-sm py-1.5 px-3 text-xs font-mono text-white focus:outline-none focus:border-terminal-cyan/50 transition-all;
+  }
+}
+
+.animate-scroll {
+  animation: scroll 30s linear infinite;
+}
+
+@keyframes scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-terminal-line rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-zinc-700;
+}
