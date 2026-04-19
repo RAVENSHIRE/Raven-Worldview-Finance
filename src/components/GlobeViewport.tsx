@@ -5,14 +5,21 @@ import { StockNode, FinanceEvent } from '../types';
 interface GlobeViewportProps {
   stocks: StockNode[];
   events: FinanceEvent[];
+  activeLayers: string[];
   onSelectStock: (stock: StockNode) => void;
   selectedStock?: StockNode | null;
   colorMode: 'change' | 'trump_beta';
 }
 
-export default function GlobeViewport({ stocks, events, onSelectStock, selectedStock, colorMode }: GlobeViewportProps) {
+export default function GlobeViewport({ stocks, events, activeLayers, onSelectStock, selectedStock, colorMode }: GlobeViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const globeInstance = useRef<any>(null);
+
+  // Mock Shipping Corridors for Globe
+  const ARCHS_DATA = [
+    { startLat: 29.9, startLng: 32.5, endLat: 40.7, endLng: -74.0, name: 'Suez to NY Pipeline', color: '#00E0FF' },
+    { startLat: 1.3, startLng: 103.8, endLat: 34.0, endLng: -118.2, name: 'Malacca to Long Beach', color: '#D4AF37' }
+  ];
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -23,6 +30,14 @@ export default function GlobeViewport({ stocks, events, onSelectStock, selectedS
       .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
       .atmosphereColor('#00E0FF')
       .atmosphereAltitude(0.15)
+      // Arcs for Shipping Corridors
+      .arcLabel(d => (d as any).name)
+      .arcColor('color')
+      .arcDashLength(0.4)
+      .arcDashGap(4)
+      .arcDashInitialGap(() => Math.random() * 5)
+      .arcDashAnimateTime(1000)
+      .arcStroke(0.1)
       // Points
       .pointLat('lat')
       .pointLng('lon')
@@ -56,9 +71,13 @@ export default function GlobeViewport({ stocks, events, onSelectStock, selectedS
                 <span style="opacity: 0.6;">SIGNAL:</span>
                 <span style="color: #00E0FF; font-weight: 900;">${stock.momentumSignal || 'STEADY'}</span>
             </div>
-            <div style="display: flex; justify-content: space-between;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
                 <span style="opacity: 0.6;">VAL_CAP:</span>
                 <span style="font-weight: 900;">$${(stock.marketCap / 1e9).toFixed(1)}B</span>
+            </div>
+            <div style="border-top: 1px solid #28282A; margin-top: 6px; padding-top: 4px; display: flex; justify-content: space-between; font-size: 8px;">
+                <span style="opacity: 0.4;">LAST_SYNK:</span>
+                <span style="color: ${stock.isStale ? '#FF3131' : '#00E0FF'};">${stock.lastUpdated ? new Date(stock.lastUpdated).toLocaleTimeString() : 'WAIT'}</span>
             </div>
           </div>
         `;
@@ -102,17 +121,25 @@ export default function GlobeViewport({ stocks, events, onSelectStock, selectedS
 
   useEffect(() => {
     if (globeInstance.current) {
-      globeInstance.current.pointsData(stocks);
+      globeInstance.current.pointsData(activeLayers.includes('Signal Heatmap') ? stocks : []);
     }
-  }, [stocks]);
+  }, [stocks, activeLayers]);
 
   useEffect(() => {
     if (globeInstance.current) {
-      // Only show recent geo-located events on the globe
-      const mapEvents = events.filter(e => e.lat !== undefined && e.lon !== undefined);
+      // Only show recent geo-located events on the globe if Pulse/Events layer is active
+      // Assumed mapping: 'Crypto Nodes' or implicit 'Events'
+      const showEvents = activeLayers.includes('Crypto Nodes') || activeLayers.includes('AIS Corridors');
+      const mapEvents = showEvents ? events.filter(e => e.lat !== undefined && e.lon !== undefined) : [];
       globeInstance.current.ringsData(mapEvents);
     }
-  }, [events]);
+  }, [events, activeLayers]);
+
+  useEffect(() => {
+    if (globeInstance.current) {
+        globeInstance.current.arcsData(activeLayers.includes('AIS Corridors') ? ARCHS_DATA : []);
+    }
+  }, [activeLayers]);
 
   useEffect(() => {
     if (globeInstance.current && selectedStock) {

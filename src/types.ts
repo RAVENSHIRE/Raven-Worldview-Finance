@@ -18,6 +18,7 @@ export type StockNode = {
   riskScore?: number;
   trumpBeta?: number;
   lastUpdated: string;
+  isStale?: boolean;
   // Persona Specifics
   ipoStatus?: 'pre' | 'imminent' | 'public' | 'na';
   aiStrength?: number; // 0-10
@@ -44,6 +45,33 @@ export type AISNode = {
   status: string;
   type: 'tanker' | 'container' | 'cargo';
   dest: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'swarm';
+  agentName?: string;
+  content: string;
+  timestamp: string;
+};
+
+export type AgentStatus = 'idle' | 'scanning' | 'analyzing' | 'alerting';
+
+export type AgentInstance = {
+  id: string;
+  name: string;
+  persona: string;
+  status: AgentStatus;
+  focus: string[];
+};
+
+export type BacktestResult = {
+  symbol: string;
+  period: string;
+  return: number;
+  maxDrawdown: number;
+  sharpeRatio: number;
+  trades: number;
 };
 
 export type SatelliteNode = {

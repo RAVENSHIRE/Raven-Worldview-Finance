@@ -7,9 +7,10 @@ interface MonitorProps {
   stocks: StockNode[];
   onSelectStock: (stock: StockNode) => void;
   selectedStock?: StockNode | null;
+  showSignals?: boolean;
 }
 
-export default function EquityMonitor({ stocks, onSelectStock, selectedStock }: MonitorProps) {
+export default function EquityMonitor({ stocks, onSelectStock, selectedStock, showSignals = true }: MonitorProps) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex-1 overflow-y-auto overflow-x-auto">
@@ -19,12 +20,11 @@ export default function EquityMonitor({ stocks, onSelectStock, selectedStock }: 
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium">Ticker</th>
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium">Sector</th>
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-right">Price</th>
-              <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-right">1D %</th>
-              <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-right">5D %</th>
-              <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-right">Surge</th>
+              <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-right">CHG</th>
+              <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-center">SYNC</th>
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium">IPO_Stat</th>
               <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium text-center">AI_Str</th>
-              <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium">Signal</th>
+              {showSignals && <th className="px-4 py-3 text-[9px] text-terminal-text-secondary uppercase tracking-widest font-medium">Signal</th>}
             </tr>
           </thead>
           <tbody>
@@ -60,14 +60,16 @@ export default function EquityMonitor({ stocks, onSelectStock, selectedStock }: 
                   )}>
                     {isGain1d ? '+' : ''}{stock.change1d.toFixed(1)}%
                   </td>
-                  <td className={cn(
-                    "px-4 py-2 text-right",
-                    isGain5d ? "text-terminal-green" : "text-terminal-red"
-                  )}>
-                    {isGain5d ? '+' : ''}{stock.change5d.toFixed(1)}%
-                  </td>
-                  <td className="px-4 py-2 text-right text-terminal-cyan">
-                    {surge}x
+                  <td className="px-4 py-2 text-center">
+                    {stock.isStale ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-terminal-red/10 text-terminal-red border border-terminal-red/20 rounded-[1px] text-[8px] animate-pulse font-black">
+                        <AlertCircle size={8} /> STALE
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-terminal-green/5 text-terminal-green/60 border border-terminal-green/20 rounded-[1px] text-[8px]">
+                        <Zap size={8} className="fill-terminal-green" /> LIVE
+                      </span>
+                    )}
                   </td>
                   <td className={cn(
                     "px-4 py-2 uppercase font-black tracking-tighter text-[10px]",
@@ -78,15 +80,17 @@ export default function EquityMonitor({ stocks, onSelectStock, selectedStock }: 
                   <td className="px-4 py-2 text-center text-terminal-cyan font-bold">
                     {stock.aiStrength !== undefined ? stock.aiStrength : '---'}
                   </td>
-                  <td className="px-4 py-2">
-                    {isBreakout ? (
-                      <span className="text-terminal-cyan font-bold tracking-tighter">🚀 BREAKOUT</span>
-                    ) : stock.change5d > 10 ? (
-                      <span className="text-terminal-cyan font-bold tracking-tighter">🚀 MOMENTUM</span>
-                    ) : (
-                      <span className="text-terminal-text-secondary opacity-60 uppercase">Consolidating</span>
-                    )}
-                  </td>
+                  {showSignals && (
+                    <td className="px-4 py-2">
+                        {isBreakout ? (
+                        <span className="text-terminal-cyan font-bold tracking-tighter">🚀 BREAKOUT</span>
+                        ) : stock.change5d > 10 ? (
+                        <span className="text-terminal-cyan font-bold tracking-tighter">🚀 MOMENTUM</span>
+                        ) : (
+                        <span className="text-terminal-text-secondary opacity-60 uppercase">Consolidating</span>
+                        )}
+                    </td>
+                  )}
                 </motion.tr>
               );
             })}

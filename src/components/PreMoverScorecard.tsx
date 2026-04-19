@@ -39,7 +39,10 @@ export default function PreMoverScorecard({ stocks }: ScorecardProps) {
                 <tr key={stock.ticker} className="border-b border-terminal-line/20 hover:bg-white/5 transition-colors group">
                   <td className="p-2">
                     <div className="flex flex-col">
-                      <span className="text-[11px] font-black group-hover:text-terminal-gold transition-colors">{stock.ticker}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-black group-hover:text-terminal-gold transition-colors">{stock.ticker}</span>
+                        {stock.isStale && <div className="w-1 h-1 rounded-full bg-terminal-red animate-pulse" title="STALE_DATA" />}
+                      </div>
                       <span className="text-[8px] opacity-40 uppercase">{stock.sector}</span>
                     </div>
                   </td>
