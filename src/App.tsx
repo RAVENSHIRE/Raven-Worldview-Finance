@@ -1,5 +1,5 @@
-import { useMemo, useEffect, useCallback } from 'react';
-import { MOCK_STOCKS } from './types';
+import { useMemo, useEffect, useCallback, useState } from 'react';
+import { StockNode, SwarmMessage, FinanceEvent } from './types';
 import PreMoverScorecard from './components/hud/PreMoverScorecard';
 import GlobeView from './canvas/GlobeView';
 import FlatView from './canvas/FlatView';
@@ -26,6 +26,8 @@ import { useMarketState } from './store/useMarketState';
 import { useSpatialState } from './store/useSpatialState';
 
 export default function App() {
+  const [universe, setUniverse] = useState<StockNode[]>([]);
+
   // Decentralized State via Zustand
   const { 
     liveQuotes, setLiveQuotes, 
@@ -33,7 +35,8 @@ export default function App() {
     events, addEvent,
     swarmMessages, addSwarmMessage,
     isRefreshing, setIsRefreshing,
-    syncError, setSyncError
+    syncError, setSyncError,
+    connectionStatus, setConnectionStatus
   } = useMarketState();
 
   const {
@@ -45,10 +48,14 @@ export default function App() {
   } = useSpatialState();
 
   const fetchBatch = useCallback(async () => {
+    if (universe.length === 0) {
+      return;
+    }
+
     setIsRefreshing(true);
     setSyncError(null);
     
-    const symbolList = MOCK_STOCKS
+    const symbolList = universe
       .filter(s => s.exchange && !s.exchange.includes('PRIVATE'))
       .map(s => encodeURIComponent(s.ticker));
 
@@ -77,7 +84,37 @@ export default function App() {
     } finally {
       setTimeout(() => setIsRefreshing(false), 800);
     }
-  }, [setIsRefreshing, setSyncError, setLiveQuotes]);
+  }, [setIsRefreshing, setSyncError, setLiveQuotes, universe]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchUniverse = async () => {
+      try {
+        const res = await fetch(new URL('/api/universe', window.location.origin).toString());
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Universe fetch failed');
+        }
+
+        if (isMounted) {
+          setUniverse(data.assets || []);
+        }
+      } catch (e: any) {
+        console.error('Universe Sync Failure', e);
+        if (isMounted) {
+          setSyncError({ code: 'UNIVERSE_SYNC_FAILED', message: e.message || 'Unable to load asset universe.' });
+        }
+      }
+    };
+
+    fetchUniverse();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [setSyncError]);
 
   // WebSocket Ingest
   useEffect(() => {
@@ -85,42 +122,86 @@ export default function App() {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
-    
-    let ws: WebSocket;
-    try {
-        ws = new WebSocket(wsUrl);
-    } catch (e) {
-        console.error("WebSocket Initialization Failed", e);
-        return;
-    }
+    let ws: WebSocket | null = null;
+    let retryTimer: number | undefined;
+    let reconnectAttempts = 0;
+    let isActive = true;
 
-    ws.onmessage = (message) => {
+    const connect = () => {
+      if (!isActive) return;
+
+      setConnectionStatus(reconnectAttempts === 0 ? 'connecting' : 'reconnecting');
+
       try {
-        const event = JSON.parse(message.data);
-        if (event.type === 'AGENT_TALK') {
-            addSwarmMessage(event);
-        } else {
-            addEvent(event);
-        }
+        ws = new WebSocket(wsUrl);
       } catch (e) {
-        console.error("Pulse Sync Error", e);
+        console.error("WebSocket Initialization Failed", e);
+        scheduleReconnect();
+        return;
       }
+
+      ws.onopen = () => {
+        reconnectAttempts = 0;
+        setConnectionStatus('live');
+      };
+
+      ws.onmessage = (message) => {
+        try {
+          const payload = JSON.parse(message.data) as SwarmMessage | FinanceEvent;
+          if (payload.type === 'AGENT_TALK') {
+            addSwarmMessage(payload);
+          } else {
+            addEvent(payload);
+          }
+        } catch (e) {
+          console.error("Pulse Sync Error", e);
+        }
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
+
+      ws.onclose = () => {
+        if (!isActive) return;
+        setConnectionStatus('reconnecting');
+        scheduleReconnect();
+      };
     };
 
-    return () => ws.close();
-  }, [addEvent, addSwarmMessage]);
+    const scheduleReconnect = () => {
+      if (!isActive) return;
+      reconnectAttempts += 1;
+      const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), 15000);
+      retryTimer = window.setTimeout(connect, delay);
+    };
+
+    connect();
+
+    return () => {
+      isActive = false;
+      setConnectionStatus('offline');
+      if (retryTimer) {
+        window.clearTimeout(retryTimer);
+      }
+      ws?.close();
+    };
+  }, [addEvent, addSwarmMessage, setConnectionStatus]);
 
   // Periodic Sync
   useEffect(() => {
+      if (universe.length === 0) return;
       fetchBatch();
       const interval = setInterval(fetchBatch, 30000);
       return () => clearInterval(interval);
-  }, [fetchBatch]);
+  }, [fetchBatch, universe.length]);
 
   const processedStocks = useMemo(() => {
-    return MOCK_STOCKS.map(s => {
-      const volumeSurge = s.volume / s.avg30dVolume;
+    return universe.map(s => {
+      const baseVolumeSurge = s.avg30dVolume > 0 ? s.volume / s.avg30dVolume : 0;
       const quote = liveQuotes[s.ticker];
+      const liveVolume = (quote && quote.volume !== undefined && quote.volume !== null) ? Number(quote.volume) : s.volume;
+      const volumeSurge = s.avg30dVolume > 0 ? liveVolume / s.avg30dVolume : 0;
       
       const currentPrice = (quote && quote.price !== undefined && quote.price !== null) ? Number(quote.price) : s.price;
       const currentChange = (quote && quote.change1d !== undefined && quote.change1d !== null) ? Number(quote.change1d) : s.change1d;
@@ -129,14 +210,23 @@ export default function App() {
         ...s,
         price: currentPrice,
         change1d: currentChange,
-        volume: (quote && quote.volume) ? Number(quote.volume) : s.volume,
-        marketCap: (quote && quote.marketCap) ? Number(quote.marketCap) : s.marketCap,
+        volume: liveVolume,
+        marketCap: (quote && quote.marketCap !== undefined && quote.marketCap !== null) ? Number(quote.marketCap) : s.marketCap,
         lastUpdated: quote?.lastUpdated,
         isStale: quote ? (new Date().getTime() - new Date(quote.lastUpdated).getTime() > 45000) : true,
-        volumeSurge: quote ? Number(quote.volume) / s.avg30dVolume : volumeSurge,
+        volumeSurge: quote ? volumeSurge : baseVolumeSurge,
       };
     });
-  }, [liveQuotes]);
+  }, [liveQuotes, universe]);
+
+  useEffect(() => {
+    if (!selectedStock) return;
+
+    const refreshedSelection = processedStocks.find((stock) => stock.ticker === selectedStock.ticker);
+    if (refreshedSelection && refreshedSelection !== selectedStock) {
+      setSelectedStock(refreshedSelection);
+    }
+  }, [processedStocks, selectedStock, setSelectedStock]);
 
   const filteredStocks = useMemo(() => {
     return processedStocks.filter(stock => {
@@ -281,9 +371,16 @@ export default function App() {
                 </p>
             </div>
             <div className="flex items-center justify-between text-[9px] text-zinc-700 font-bold tracking-widest">
-              <span>SYNC_LATENCY</span>
-              <span className="text-terminal-green flex items-center gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-terminal-green animate-pulse" /> +42ms
+              <span>WS_LINK</span>
+              <span className={cn(
+                "flex items-center gap-1 uppercase",
+                connectionStatus === 'live' ? "text-terminal-green" : connectionStatus === 'offline' ? "text-terminal-red" : "text-terminal-gold"
+              )}>
+                <div className={cn(
+                  "w-1.5 h-1.5 rounded-full",
+                  connectionStatus === 'live' ? "bg-terminal-green animate-pulse" : connectionStatus === 'offline' ? "bg-terminal-red" : "bg-terminal-gold animate-pulse"
+                )} />
+                {connectionStatus}
               </span>
             </div>
         </div>

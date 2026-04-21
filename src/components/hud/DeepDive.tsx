@@ -78,7 +78,7 @@ export default function DeepDive({ stock, onClose }: DeepDiveProps) {
     );
   }
 
-  const volumeSurge = (stock.volume / stock.avg30dVolume).toFixed(1);
+  const volumeSurge = stock.avg30dVolume > 0 ? (stock.volume / stock.avg30dVolume).toFixed(1) : '0.0';
   const isEarlyMover = parseFloat(volumeSurge) > 1.5 && stock.change5d > 10;
 
   return (

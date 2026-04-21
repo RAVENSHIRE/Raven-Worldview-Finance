@@ -2,6 +2,7 @@ import asyncio
 import json
 import random
 import datetime
+import os
 import websockets
 
 # Mock Financial & Alternative Geo Data Sources
@@ -25,8 +26,9 @@ async def stream_finance_worldview():
     Simulates a Python microservice that fetches real-time data from 
     disparate finance/geo APIs and pushes them to the central backend.
     """
-    uri = "ws://localhost:3000" # Connecting back to our local Express server
-    
+    token = os.getenv("INGESTION_TOKEN", "raven-dev-ingest")
+    uri = f"ws://localhost:3000?role=ingest&token={token}"
+
     async with websockets.connect(uri) as websocket:
         print(f"[INGESTION_ENGINE] Connection Established to Finance-Worldview Pulse")
         
@@ -35,8 +37,10 @@ async def stream_finance_worldview():
             await asyncio.sleep(random.uniform(5, 12))
             
             # Select random event and attach timestamp
-            event = random.choice(FINANCE_NODES)
-            event["timestamp"] = datetime.datetime.now().isoformat()
+            event = {
+                **random.choice(FINANCE_NODES),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
             
             # Push to the dashboard stream
             print(f"[PUSH] -> {event['label']}")

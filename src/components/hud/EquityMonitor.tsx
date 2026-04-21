@@ -1,7 +1,7 @@
 import { StockNode } from '../../types';
 import { motion } from 'motion/react';
 import { cn } from '../../lib/utils';
-import { TrendingUp, TrendingDown, AlertCircle, Zap } from 'lucide-react';
+import { AlertCircle, Zap } from 'lucide-react';
 
 interface MonitorProps {
   stocks: StockNode[];
@@ -31,8 +31,7 @@ export default function EquityMonitor({ stocks, onSelectStock, selectedStock, sh
             {stocks.map((stock) => {
               const isSelected = selectedStock?.ticker === stock.ticker;
               const isGain1d = stock.change1d >= 0;
-              const isGain5d = stock.change5d >= 0;
-              const surge = (stock.volume / stock.avg30dVolume).toFixed(1);
+              const surge = stock.avg30dVolume > 0 ? (stock.volume / stock.avg30dVolume).toFixed(1) : '0.0';
               const isBreakout = parseFloat(surge) > 2.0;
 
               return (
@@ -82,13 +81,13 @@ export default function EquityMonitor({ stocks, onSelectStock, selectedStock, sh
                   </td>
                   {showSignals && (
                     <td className="px-4 py-2">
-                        {isBreakout ? (
-                        <span className="text-terminal-cyan font-bold tracking-tighter">🚀 BREAKOUT</span>
-                        ) : stock.change5d > 10 ? (
-                        <span className="text-terminal-cyan font-bold tracking-tighter">🚀 MOMENTUM</span>
-                        ) : (
+                      {isBreakout ? (
+                        <span className="text-terminal-cyan font-bold tracking-tighter">BREAKOUT</span>
+                      ) : stock.change5d > 10 ? (
+                        <span className="text-terminal-cyan font-bold tracking-tighter">MOMENTUM</span>
+                      ) : (
                         <span className="text-terminal-text-secondary opacity-60 uppercase">Consolidating</span>
-                        )}
+                      )}
                     </td>
                   )}
                 </motion.tr>
