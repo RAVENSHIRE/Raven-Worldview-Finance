@@ -2,15 +2,10 @@ import asyncio
 import json
 import random
 import datetime
-import websockets
+import redis
+import os
 
 # Mock Financial & Alternative Geo Data Sources
-# In a production environment, you would use:
-# - AIS: Spire, Orbcomm, or MarineTraffic API
-# - Aerospace: Space-Track.org or Rocket Lab API
-# - Crypto: Chainlink or node health status APIs
-# - Equities: Polygon.io or Alpaca
-
 FINANCE_NODES = [
     {"type": "AIS_ALERT", "label": "Blockade Risk: Hormuz corridor slowing", "lat": 26.5, "lon": 56.5, "severity": "danger", "source": "GEO_INT"},
     {"type": "AERO_ALERT", "label": "Rocket Lab Launch Success - Mahia, NZ", "lat": -39.26, "lon": 177.86, "severity": "success", "source": "BLOOMBERG"},
@@ -22,30 +17,39 @@ FINANCE_NODES = [
 
 async def stream_finance_worldview():
     """
-    Simulates a Python microservice that fetches real-time data from 
-    disparate finance/geo APIs and pushes them to the central backend.
+    Simulates a Python microservice that fetches real-time data and
+    publishes it to Redis channels for the Node.js gateway to broadcast.
     """
-    uri = "ws://localhost:3000" # Connecting back to our local Express server
-    
-    async with websockets.connect(uri) as websocket:
-        print(f"[INGESTION_ENGINE] Connection Established to Finance-Worldview Pulse")
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    try:
+        r = redis.from_url(redis_url)
+        print(f"[INGESTION_ENGINE] Connected to Redis at {redis_url}")
+    except Exception as e:
+        print(f"[ERROR] Could not connect to Redis: {e}")
+        return
+
+    while True:
+        # Simulate processing time for various scrapers/APIs
+        await asyncio.sleep(random.uniform(5, 12))
         
-        while True:
-            # Simulate processing time for various scrapers/APIs
-            await asyncio.sleep(random.uniform(5, 12))
-            
-            # Select random event and attach timestamp
-            event = random.choice(FINANCE_NODES)
-            event["timestamp"] = datetime.datetime.now().isoformat()
-            
-            # Push to the dashboard stream
-            print(f"[PUSH] -> {event['label']}")
-            await websocket.send(json.dumps(event))
+        # Select random event and attach timestamp
+        event = random.choice(FINANCE_NODES)
+        event["timestamp"] = datetime.datetime.now().isoformat()
+        
+        # Determine channel based on event type
+        channel = "raven:geo"
+        if event["type"] == "MARKET_CATALYST":
+            channel = "raven:equity"
+        
+        # Push to Redis
+        print(f"[PUBLISH] -> {channel}: {event['label']}")
+        try:
+            r.publish(channel, json.dumps(event))
+        except Exception as e:
+            print(f"[ERROR] Publish failed: {e}")
 
 if __name__ == "__main__":
     try:
         asyncio.run(stream_finance_worldview())
     except KeyboardInterrupt:
         print("[INGESTION_ENGINE] Offline")
-    except ConnectionRefusedError:
-        print("[ERROR] Could not connect to dashboard server. Ensure 'npm run dev' is active.")

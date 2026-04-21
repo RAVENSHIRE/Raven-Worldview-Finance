@@ -5,12 +5,19 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import yf from 'yahoo-finance2';
+import { createClient } from 'redis';
+import crypto from 'crypto';
 
-// yahoo-finance2 v3 resolution for ESM/TSX
-// In many ESM builds, the default export is the pre-initialized instance
+// ─── TYPES ──────────────────────────────────────────────────────────────────
+interface ConnectedClient {
+  ws: WebSocket;
+  id: string;
+  connectedAt: number;
+  subscriptions: Set<string>;
+}
+
+// ─── YAHOO FINANCE SETUP ─────────────────────────────────────────────────────
 let yahooFinance: any = yf;
-
-// Error recovery for environments where it defaults to class
 if (typeof yf === 'function') {
     try {
         yahooFinance = new (yf as any)();
@@ -22,198 +29,237 @@ if (typeof yf === 'function') {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ─── MARKET DATA CACHE (L1 + L2) ──────────────────────────────────────────────
+class MarketDataCache {
+  private l1Cache = new Map<string, { data: any, cachedAt: number, ttlMs: number }>();
+  private readonly L1_TTL_MS = 30_000; // 30s
+  private readonly L2_TTL_S  = 35;     // 35s
+
+  constructor(private redisClient: any) {}
+
+  private makeKey(symbols: string[]): string {
+    return `market:batch:${crypto.createHash('md5').update(symbols.sort().join(',')).digest('hex')}`;
+  }
+
+  async get<T>(symbols: string[]): Promise<T | null> {
+    const key = this.makeKey(symbols);
+    
+    // L1 Check
+    const l1 = this.l1Cache.get(key);
+    if (l1 && (Date.now() - l1.cachedAt < l1.ttlMs)) return l1.data;
+
+    // L2 Check (Redis)
+    try {
+      const l2 = await this.redisClient.get(key);
+      if (l2) {
+        const data = JSON.parse(l2);
+        // Hydrate L1
+        this.l1Cache.set(key, { data, cachedAt: Date.now(), ttlMs: this.L1_TTL_MS });
+        return data;
+      }
+    } catch (err) {
+      console.warn('[CACHE] Redis L2 read error:', err);
+    }
+    return null;
+  }
+
+  async set<T>(symbols: string[], data: T): Promise<void> {
+    const key = this.makeKey(symbols);
+    this.l1Cache.set(key, { data, cachedAt: Date.now(), ttlMs: this.L1_TTL_MS });
+    try {
+      await this.redisClient.setEx(key, this.L2_TTL_S, JSON.stringify(data));
+    } catch (err) {
+      console.warn('[CACHE] Redis L2 write error:', err);
+    }
+  }
+}
+
+// ─── WEBSOCKET CLIENT REGISTRY ────────────────────────────────────────────────
+class ClientRegistry {
+  private clients = new Map<string, ConnectedClient>();
+
+  register(ws: WebSocket): string {
+    const id = crypto.randomUUID();
+    this.clients.set(id, {
+      ws,
+      id,
+      connectedAt: Date.now(),
+      subscriptions: new Set(['*'])
+    });
+    console.log(`[WS] Client registered: ${id} | Total: ${this.clients.size}`);
+    return id;
+  }
+
+  deregister(id: string): void {
+    this.clients.delete(id);
+    console.log(`[WS] Client deregistered: ${id} | Total: ${this.clients.size}`);
+  }
+
+  broadcast(payload: object, channel?: string): void {
+    const frame = JSON.stringify(payload);
+    const deadClients: string[] = [];
+
+    for (const [id, client] of this.clients) {
+      if (client.ws.readyState !== WebSocket.OPEN) {
+        deadClients.push(id);
+        continue;
+      }
+      if (channel && !client.subscriptions.has('*') && !client.subscriptions.has(channel)) {
+        continue;
+      }
+      try {
+        client.ws.send(frame);
+      } catch {
+        deadClients.push(id);
+      }
+    }
+    deadClients.forEach(id => this.deregister(id));
+  }
+
+  get count(): number { return this.clients.size; }
+}
+
+// ─── MAIN SERVER BOOTSTRAP ────────────────────────────────────────────────────
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
+  const PORT = parseInt(process.env.PORT || '3000', 10);
+
+  // ── Redis Setup ──
+  const redisCache = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+  const redisSub   = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+
+  redisCache.on('error', err => console.error('[REDIS:CACHE] Error:', err));
+  redisSub.on('error',   err => console.error('[REDIS:SUB] Error:',   err));
+
+  try {
+    await Promise.all([redisCache.connect(), redisSub.connect()]);
+    console.log('[REDIS] Cache + Sub clients connected');
+  } catch (err) {
+    console.error('[REDIS] Connection failed. Running without Redis cache/pubsub.', err);
+  }
+
+  const cache    = new MarketDataCache(redisCache);
+  const registry = new ClientRegistry();
+
+  // ── WebSocket Server ──
   const wss = new WebSocketServer({ server: httpServer });
-  const PORT = 3000;
 
-  // Real-Time Agent Swarm Simulated Brain
-  const agents = [
-    { name: 'MACRO_SCOUT', persona: 'Global Policy Tracker' },
-    { name: 'IPO_HUNTER', persona: 'S-1 Filing Analyst' },
-    { name: 'REUTERS_ALPHA', persona: 'Reuters LiveSentiment' },
-    { name: 'PERPLEXITY_FI', persona: 'Quantum Reasoning Engine' },
-    { name: 'GEO_INTEL', persona: 'Satellite Intelligence' }
-  ];
-
-  const agentMessages = [
-    "Detected S-1 metadata for Databricks. Imminent pulse detected.",
-    "IMF liquidity signal correlates with Swiss SMI rebound.",
-    "Reuters Flash: Klarna finalizing NY listing with 18% premium.",
-    "Perplexity Analysis: Aerospace nodes showing 4x momentum divergence.",
-    "Geopolitical Alert: Malacca Strait bottleneck increasing shipping risk premiums.",
-    "Crypto-Infra nodes accumulating across GCC satellite hubs."
-  ];
-
-  // Enhanced Finance Events (Geo Alpha Pulse)
-  const financeEvents = [
-    { type: 'MACRO_PULSE', label: 'Reuters: SNB Rate Projection Adjusted', severity: 'info', source: 'REUTERS' },
-    { type: 'GEOPOLITICAL', label: 'Perplexity: Middle East Shipping Route Escalation', severity: 'danger', source: 'PERPLEXITY' },
-    { type: 'MARKET_CATALYST', label: 'Market Pulse: RKLB (+12%) Aerospace Breakout', symbol: 'RKLB', severity: 'success', source: 'BLOOMBERG' },
-    { type: 'AIS_ALERT', label: 'Energy Tanker "NEPTUNE" Diverting from Suez', lat: 29.9, lon: 32.5, severity: 'warn', source: 'GEO_INTEL' }
-  ];
-
-  wss.on("connection", (ws) => {
-    console.log("Client connected to Finance-Worldview Pulse");
+  wss.on('connection', (ws) => {
+    const clientId = registry.register(ws);
     
-    ws.send(JSON.stringify({ type: 'SYSTEM', label: 'CONNECTION_ESTABLISHED: GEO_FEED_SYNCED' }));
+    ws.send(JSON.stringify({
+      type: 'SYSTEM',
+      label: 'CONNECTION_ESTABLISHED: GEO_FEED_SYNCED',
+      clientId,
+      timestamp: new Date().toISOString()
+    }));
 
-    // Stream Geo Events
-    const geoInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        const event = financeEvents[Math.floor(Math.random() * financeEvents.length)];
-        ws.send(JSON.stringify({
-          ...event,
-          timestamp: new Date().toISOString()
-        }));
+    let isAlive = true;
+    ws.on('pong', () => { isAlive = true; });
+    
+    const heartbeat = setInterval(() => {
+      if (!isAlive) {
+        clearInterval(heartbeat);
+        registry.deregister(clientId);
+        ws.terminate();
+        return;
       }
-    }, 7000);
+      isAlive = false;
+      if (ws.readyState === WebSocket.OPEN) ws.ping();
+    }, 30_000);
 
-    // Stream Agent Swarm Messages (Higher Density for Persona Focus)
-    const swarmInterval = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-            const agent = agents[Math.floor(Math.random() * agents.length)];
-            const msg = agentMessages[Math.floor(Math.random() * agentMessages.length)];
-            ws.send(JSON.stringify({
-                type: 'AGENT_TALK',
-                agentName: agent.name,
-                content: msg,
-                timestamp: new Date().toISOString(),
-                severity: msg.includes('critical') || msg.includes('Geopolitical') ? 'danger' : 'info'
-            }));
-        }
-    }, 8000);
+    ws.on('close', () => {
+      clearInterval(heartbeat);
+      registry.deregister(clientId);
+    });
 
-    ws.on("close", () => {
-        clearInterval(geoInterval);
-        clearInterval(swarmInterval);
+    ws.on('error', () => {
+      clearInterval(heartbeat);
+      registry.deregister(clientId);
     });
   });
 
-  // API Routes
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", engine: "Finance-Worldview-Alpha" });
+  // ── Redis Subscriptions ──
+  const CHANNELS = ['raven:geo', 'raven:equity', 'raven:agent'];
+  if (redisSub.isOpen) {
+    await redisSub.subscribe(CHANNELS, (message, channel) => {
+      try {
+        const payload = JSON.parse(message);
+        if (channel === 'raven:geo' && payload.severity === 'danger') {
+          registry.broadcast({ ...payload, _fastPath: true }, 'raven:geo');
+          return;
+        }
+        registry.broadcast(payload, channel);
+      } catch (err) {
+        console.error(`[REDIS:SUB] Parse error on ${channel}:`, err);
+      }
+    });
+    console.log(`[REDIS:SUB] Subscribed to: ${CHANNELS.join(', ')}`);
+  }
+
+  // ── API Routes ──
+  app.get('/api/health', (_req, res) => {
+    res.json({
+      status: 'ok',
+      engine: 'Raven-Worldview-Alpha',
+      clients: registry.count,
+      uptime: process.uptime()
+    });
   });
 
-  // Real Market Data Proxy (Comprehensive Batch)
-  app.get("/api/market/batch", async (req, res) => {
-    const symbols = (req.query.symbols as string || "").split(",");
-    if (!symbols.length || symbols[0] === "") return res.json({});
-    try {
-        const results = await yahooFinance.quote(symbols.slice(0, 20)); 
-        const map: any = {};
-        const processQuote = (r: any) => ({
-            price: r.regularMarketPrice,
-            change1d: r.regularMarketChangePercent,
-            volume: r.regularMarketVolume,
-            marketCap: r.marketCap,
-            lastUpdated: new Date().toISOString()
-        });
+  // PostgreSQL stub for /api/universe (Foundation Phase Task 4)
+  app.get('/api/universe', async (_req, res) => {
+    // In a production environment, this would fetch from PostgreSQL.
+    // For now, we return a structured list of active tickers for hydration.
+    const universe = [
+      { ticker: 'AAPL', name: 'Apple Inc.', lat: 37.3349, lon: -122.0091, sector: 'Technology', iso_code: 'USA' },
+      { ticker: 'TSLA', name: 'Tesla, Inc.', lat: 30.2672, lon: -97.7431, sector: 'Consumer Cyclical', iso_code: 'USA' },
+      { ticker: 'NVDA', name: 'NVIDIA Corp.', lat: 37.3541, lon: -121.9552, sector: 'Technology', iso_code: 'USA' },
+      { ticker: 'RKLB', name: 'Rocket Lab USA', lat: -39.2603, lon: 177.8648, sector: 'Industrials', iso_code: 'NZL' },
+      { ticker: 'SNB', name: 'Swiss National Bank', lat: 47.3686, lon: 8.5391, sector: 'Financial Services', iso_code: 'CHE' }
+    ];
+    res.json(universe);
+  });
 
-        if (Array.isArray(results)) {
-            (results as any[]).forEach(r => { map[r.symbol] = processQuote(r); });
-        } else if (results) {
-            map[(results as any).symbol] = processQuote(results);
-        }
-        res.json(map);
-    } catch (e: any) {
-        console.error("Batch Market API Error:", e);
-        
-        let errorStatus = 500;
-        let errorMessage = "UNABLE_TO_FETCH_BATCH_DATA";
+  app.get('/api/market/batch', async (req, res) => {
+    const rawSymbols = (req.query.symbols as string || '').split(',').filter(Boolean);
+    const symbols = rawSymbols.slice(0, 30);
+    
+    if (symbols.length === 0) return res.json({});
 
-        if (e.name === 'YahooFinanceError') {
-            if (e.message.includes('Too Many Requests') || e.code === 'TooManyRequestsError' || e.statusCode === 429) {
-                errorStatus = 429;
-                errorMessage = "API_RATE_LIMITED";
-            } else if (e.message.includes('Not Found') || e.statusCode === 404) {
-                errorStatus = 404;
-                errorMessage = "INVALID_SYMBOL_IN_BATCH";
-            }
-        }
-
-        res.status(errorStatus).json({ error: errorMessage, details: e.message });
+    const cached = await cache.get<Record<string, any>>(symbols);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(cached);
     }
-  });
 
-  app.get("/api/market/:symbol", async (req, res) => {
     try {
-        const result = await yahooFinance.quote(req.params.symbol);
-        res.json(result);
-    } catch (e: any) {
-        console.error("Market API Error:", e);
-        
-        let errorStatus = 500;
-        let errorMessage = "UNABLE_TO_FETCH_REAL_TIME_DATA";
-
-        if (e.name === 'YahooFinanceError') {
-            if (e.message.includes('Too Many Requests') || e.code === 'TooManyRequestsError' || e.statusCode === 429) {
-                errorStatus = 429;
-                errorMessage = "API_RATE_LIMITED";
-            } else if (e.message.includes('Not Found') || e.statusCode === 404) {
-                errorStatus = 404;
-                errorMessage = "INVALID_SYMBOL";
-            }
-        }
-
-        res.status(errorStatus).json({ error: errorMessage, details: e.message });
-    }
-  });
-
-  app.get("/api/market/history/:symbol", async (req, res) => {
-    try {
-        const symbol = req.params.symbol;
-        const endDate = new Date();
-        const startDate = new Date();
-        startDate.setFullYear(endDate.getFullYear() - 1);
-
-        const result = await yahooFinance.chart(symbol, {
-            period1: startDate,
-            interval: '1d'
-        });
-        
-        if (!result || !result.quotes || result.quotes.length === 0) {
-            return res.json([]);
-        }
-
-        // Return simplified series for Recharts
-        const chartData = result.quotes.map((q: any) => ({
-            date: new Date(q.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-            fullDate: q.date,
-            price: q.close
-        })).filter((q: any) => q.price !== null);
-
-        res.json(chartData);
-    } catch (e: any) {
-        console.error("History API Error:", e);
-        
-        let errorStatus = 500;
-        let errorMessage = "UNABLE_TO_FETCH_HISTORY";
-
-        if (e.message?.includes('No data found') || e.message?.includes('Not Found') || e.statusCode === 404) {
-            errorStatus = 404;
-            errorMessage = "INVALID_OR_DELISTED_SYMBOL";
-        }
-
-        res.status(errorStatus).json({ error: errorMessage, details: e.message });
-    }
-  });
-
-  // Mirofish Backtesting Mock
-  app.get("/api/backtest/:symbol", (req, res) => {
-      const symbol = req.params.symbol;
-      res.json({
-          symbol,
-          period: '12M',
-          return: (Math.random() * 40 + 10).toFixed(2),
-          maxDrawdown: (Math.random() * 15 + 5).toFixed(2),
-          sharpeRatio: (Math.random() * 1.5 + 0.5).toFixed(2),
-          trades: Math.floor(Math.random() * 50 + 10)
+      const results = await (yahooFinance as any).quote(symbols);
+      const map: Record<string, any> = {};
+      const normalize = (r: any) => ({
+        price:       r.regularMarketPrice ?? null,
+        change1d:    r.regularMarketChangePercent ?? null,
+        volume:      r.regularMarketVolume ?? null,
+        marketCap:   r.marketCap ?? null,
+        lastUpdated: new Date().toISOString()
       });
+
+      if (Array.isArray(results)) {
+        results.forEach(r => { if (r?.symbol) map[r.symbol] = normalize(r); });
+      } else if (results?.symbol) {
+        map[results.symbol] = normalize(results);
+      }
+
+      await cache.set(symbols, map);
+      res.setHeader('X-Cache', 'MISS');
+      return res.json(map);
+    } catch (e: any) {
+      res.status(500).json({ error: 'FETCH_ERROR', details: e.message });
+    }
   });
 
-  // Vite middleware for development
+  // Vite middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -223,13 +269,11 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Finance-Worldview System Active on http://localhost:${PORT}`);
+    console.log(`Raven Worldview Active on http://localhost:${PORT}`);
   });
 }
 
