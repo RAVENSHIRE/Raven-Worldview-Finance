@@ -173,6 +173,10 @@ async function startServer() {
             interval: '1d'
         });
         
+        if (!result || !result.quotes || result.quotes.length === 0) {
+            return res.json([]);
+        }
+
         // Return simplified series for Recharts
         const chartData = result.quotes.map((q: any) => ({
             date: new Date(q.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
@@ -183,7 +187,16 @@ async function startServer() {
         res.json(chartData);
     } catch (e: any) {
         console.error("History API Error:", e);
-        res.status(500).json({ error: "UNABLE_TO_FETCH_HISTORY", details: e.message });
+        
+        let errorStatus = 500;
+        let errorMessage = "UNABLE_TO_FETCH_HISTORY";
+
+        if (e.message?.includes('No data found') || e.message?.includes('Not Found') || e.statusCode === 404) {
+            errorStatus = 404;
+            errorMessage = "INVALID_OR_DELISTED_SYMBOL";
+        }
+
+        res.status(errorStatus).json({ error: errorMessage, details: e.message });
     }
   });
 

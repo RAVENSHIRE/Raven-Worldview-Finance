@@ -1,13 +1,13 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
-import { MOCK_STOCKS, StockNode, FinanceEvent } from './types';
-import PreMoverScorecard from './components/PreMoverScorecard';
-import GlobeViewport from './components/GlobeViewport';
-import FlatViewport from './components/FlatViewport';
-import EquityMonitor from './components/EquityMonitor';
-import LiveFeedSidebar from './components/LiveFeedSidebar';
-import AIChat from './components/AIChat';
-import Mirofish from './components/Mirofish';
-import DeepDive from './components/DeepDive';
+import { useMemo, useEffect, useCallback } from 'react';
+import { MOCK_STOCKS } from './types';
+import PreMoverScorecard from './components/hud/PreMoverScorecard';
+import GlobeView from './canvas/GlobeView';
+import FlatView from './canvas/FlatView';
+import EquityMonitor from './components/hud/EquityMonitor';
+import LiveFeedSidebar from './components/hud/LiveFeedSidebar';
+import AIChat from './components/hud/AIChat';
+import Mirofish from './components/hud/Mirofish';
+import DeepDive from './components/hud/DeepDive';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -22,54 +22,85 @@ import {
   RefreshCw,
   AlertCircle
 } from 'lucide-react';
+import { useMarketState } from './store/useMarketState';
+import { useSpatialState } from './store/useSpatialState';
 
 export default function App() {
-  const [selectedStock, setSelectedStock] = useState<StockNode | null>(null);
-  const [colorMode, setColorMode] = useState<'change' | 'trump_beta'>('change');
-  const [viewMode, setViewMode] = useState<'globe' | 'flat'>('globe');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [events, setEvents] = useState<FinanceEvent[]>([]);
-  const [activeLayers, setActiveLayers] = useState<string[]>(['AIS Corridors', 'Aerospace Tracker', 'Crypto Nodes']);
-  const [liveQuotes, setLiveQuotes] = useState<Record<string, any>>({});
-  const [activeTab, setActiveTab] = useState<'monitor' | 'analysis'>('monitor');
-  const [showSignals, setShowSignals] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [syncError, setSyncError] = useState<{ code: string; message: string } | null>(null);
+  // Decentralized State via Zustand
+  const { 
+    liveQuotes, setLiveQuotes, 
+    selectedStock, setSelectedStock,
+    events, addEvent,
+    swarmMessages, addSwarmMessage,
+    isRefreshing, setIsRefreshing,
+    syncError, setSyncError
+  } = useMarketState();
+
+  const {
+    viewMode, setViewMode,
+    activeLayers, toggleLayer,
+    colorMode, setColorMode,
+    searchQuery, setSearchQuery,
+    showSignals, setShowSignals
+  } = useSpatialState();
 
   const fetchBatch = useCallback(async () => {
     setIsRefreshing(true);
     setSyncError(null);
-    const symbols = MOCK_STOCKS.filter(s => s.exchange !== 'PRIVATE').map(s => s.ticker).join(',');
+    
+    const symbolList = MOCK_STOCKS
+      .filter(s => s.exchange && !s.exchange.includes('PRIVATE'))
+      .map(s => encodeURIComponent(s.ticker));
+
+    if (symbolList.length === 0) {
+        setIsRefreshing(false);
+        return;
+    }
+
+    const symbols = symbolList.join(',');
+
     try {
-      const res = await fetch(`/api/market/batch?symbols=${symbols}`);
+      const apiUrl = new URL('/api/market/batch', window.location.origin);
+      apiUrl.searchParams.set('symbols', symbols);
+      
+      const res = await fetch(apiUrl.toString());
       const data = await res.json();
       
       if (!res.ok) {
         setSyncError({ code: data.error, message: data.details || 'Sync Failed' });
       } else {
-        setLiveQuotes(prev => ({ ...prev, ...data }));
+        setLiveQuotes(data);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Real-Market Sync Failure", e);
-      setSyncError({ code: 'NETWORK_ERROR', message: 'Unable to reach sync bridge.' });
+      setSyncError({ code: 'NETWORK_ERROR', message: e.message || 'Unable to reach sync bridge.' });
     } finally {
-      // Small timeout to show the animation bit longer for better UX feedback
       setTimeout(() => setIsRefreshing(false), 800);
     }
-  }, []);
+  }, [setIsRefreshing, setSyncError, setLiveQuotes]);
 
-  // WebSocket Integration for Real-Time Finance Pulse & Agent Swarm
+  // WebSocket Ingest
   useEffect(() => {
+    if (!window.location.host) return;
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+    const wsUrl = `${protocol}//${window.location.host}`;
+    
+    let ws: WebSocket;
+    try {
+        ws = new WebSocket(wsUrl);
+    } catch (e) {
+        console.error("WebSocket Initialization Failed", e);
+        return;
+    }
 
     ws.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data);
         if (event.type === 'AGENT_TALK') {
-            setSwarmMessages(prev => [event, ...prev].slice(0, 10));
+            addSwarmMessage(event);
         } else {
-            setEvents(prev => [event, ...prev].slice(0, 50));
+            addEvent(event);
         }
       } catch (e) {
         console.error("Pulse Sync Error", e);
@@ -77,14 +108,12 @@ export default function App() {
     };
 
     return () => ws.close();
-  }, []);
+  }, [addEvent, addSwarmMessage]);
 
-  const [swarmMessages, setSwarmMessages] = useState<any[]>([]);
-
-  // Periodic Batch Price Sync
+  // Periodic Sync
   useEffect(() => {
       fetchBatch();
-      const interval = setInterval(fetchBatch, 30000); // Sync every 30s
+      const interval = setInterval(fetchBatch, 30000);
       return () => clearInterval(interval);
   }, [fetchBatch]);
 
@@ -93,7 +122,6 @@ export default function App() {
       const volumeSurge = s.volume / s.avg30dVolume;
       const quote = liveQuotes[s.ticker];
       
-      // Strict fallback to ensure display never fails even if sync returns null-like data
       const currentPrice = (quote && quote.price !== undefined && quote.price !== null) ? Number(quote.price) : s.price;
       const currentChange = (quote && quote.change1d !== undefined && quote.change1d !== null) ? Number(quote.change1d) : s.change1d;
 
@@ -118,13 +146,9 @@ export default function App() {
     });
   }, [processedStocks, searchQuery]);
 
-  const toggleLayer = (layer: string) => {
-      setActiveLayers(prev => prev.includes(layer) ? prev.filter(l => l !== layer) : [...prev, layer]);
-  };
-
   return (
     <div className="grid grid-rows-[48px_1fr_200px] grid-cols-[260px_1fr_320px] h-screen w-screen overflow-hidden bg-terminal-bg font-mono selection:bg-terminal-cyan/30 text-white">
-      {/* Header */}
+      {/* Header HUD */}
       <header className="col-span-3 border-b border-terminal-line bg-terminal-panel flex items-center justify-between px-5 z-50 shadow-lg">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 group cursor-pointer">
@@ -132,7 +156,7 @@ export default function App() {
               <Activity className="text-terminal-cyan animate-pulse" size={16} />
             </div>
             <span className="font-black tracking-widest text-[12px] text-white uppercase group-hover:text-terminal-cyan transition-colors">
-              PRE-MOVER <span className="text-terminal-cyan underline decoration-terminal-cyan/30">SYSTEMS</span> <span className="text-[9px] opacity-30 font-normal ml-3">CORE_PROTO v4.8</span>
+              PRE-MOVER <span className="text-terminal-cyan underline decoration-terminal-cyan/30">SYSTEMS</span> <span className="text-[9px] opacity-30 font-normal ml-3">CORE_PROTO v5.0_SPATIAL</span>
             </span>
           </div>
           
@@ -142,14 +166,12 @@ export default function App() {
             <button 
               onClick={() => setViewMode('globe')}
               className={cn("p-1.5 transition-all rounded-[1px]", viewMode === 'globe' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
-              title="3D Situational Mode"
             >
               <Globe size={13} />
             </button>
             <button 
               onClick={() => setViewMode('flat')}
               className={cn("p-1.5 transition-all rounded-[1px]", viewMode === 'flat' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
-              title="Tactical Map Mode"
             >
               <MapIcon size={13} />
             </button>
@@ -195,7 +217,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Left Rail: Optimized for Pre-Mover IQ */}
+      {/* Left Rail HUD */}
       <aside className="border-r border-terminal-line bg-terminal-panel flex flex-col p-4 z-10 overflow-hidden select-none gap-4">
         {syncError && (
           <div className="bg-terminal-red/10 border border-terminal-red/40 p-3 mb-2 rounded-sm flex flex-col gap-1 items-start relative overflow-hidden group">
@@ -217,7 +239,7 @@ export default function App() {
             <div className="flex-1 overflow-hidden flex flex-col">
               <div className="flex items-center gap-2 mb-3">
                 <Layers size={12} className="text-terminal-cyan" />
-                <span className="text-[10px] font-black uppercase tracking-widest text-white">Active Operational Layers</span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-white">Operational Layers</span>
               </div>
               <div className="space-y-3 bg-black/20 p-4 border border-terminal-line rounded-sm">
                  {['AIS Corridors', 'Aerospace Tracker', 'Crypto Nodes', 'Signal Heatmap'].map(layer => (
@@ -267,7 +289,7 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main Tactical Viewport */}
+      {/* 3D Canvas Viewport */}
       <main className="relative bg-[#020202] overflow-hidden group">
         <AnimatePresence mode="wait">
           <motion.div 
@@ -279,7 +301,7 @@ export default function App() {
             className="w-full h-full pb-[35%]"
           >
             {viewMode === 'globe' ? (
-              <GlobeViewport 
+              <GlobeView 
                 stocks={filteredStocks} 
                 events={events}
                 activeLayers={activeLayers}
@@ -288,7 +310,7 @@ export default function App() {
                 colorMode={colorMode}
               />
             ) : (
-                <FlatViewport 
+                <FlatView 
                   stocks={filteredStocks}
                   events={events}
                   activeLayers={activeLayers}
@@ -300,7 +322,7 @@ export default function App() {
           </motion.div>
         </AnimatePresence>
 
-        {/* Dynamic Context Workspace: Single Deep Monitor View */}
+        {/* Dynamic Context Workspace overlay */}
         <div className="absolute bottom-0 left-0 right-0 h-[35%] bg-terminal-bg/95 backdrop-blur-md border-t border-terminal-line z-20 flex flex-col pointer-events-auto">
             <div className="flex items-center gap-4 px-4 py-2 border-b border-terminal-line bg-terminal-panel/30">
                 <div className="flex items-center gap-2">
@@ -335,7 +357,7 @@ export default function App() {
             </div>
         </div>
 
-        {/* Global HUD Overlay */}
+        {/* Spatial Information HUD Overlay */}
         <div className="absolute top-6 left-6 pointer-events-none select-none">
            <div className="stat-card bg-black/60 border-terminal-line/80 backdrop-blur-xl mb-0 py-2.5 px-4 shadow-2xl border-l-[3px] border-l-terminal-cyan">
               <span className="text-[8px] text-terminal-text-secondary uppercase tracking-[0.2em] mb-1.5 block font-bold">Spatial_Intel_Engine</span>
@@ -347,7 +369,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* Right Rail: Intelligence Convergence */}
+      {/* Right Rail HUD */}
       <aside className="border-l border-terminal-line bg-terminal-panel flex flex-col p-0 z-20">
          <div className="flex-1 overflow-hidden border-b border-terminal-line h-1/2">
              <AIChat selectedStock={selectedStock} swarmMessages={swarmMessages} />
@@ -361,7 +383,7 @@ export default function App() {
          </div>
       </aside>
 
-      {/* Footer: Data Convergence Hub */}
+      {/* Bottom Data Convergence HUD */}
       <footer className="col-span-3 border-t border-terminal-line bg-terminal-panel grid grid-cols-[1fr_320px] overflow-hidden">
         <div className="border-r border-terminal-line overflow-hidden p-0">
           <EquityMonitor 
@@ -372,7 +394,7 @@ export default function App() {
         </div>
         <div className="overflow-hidden bg-black/20">
            <LiveFeedSidebar events={events} />
-        </div>
+         </div>
       </footer>
     </div>
   );

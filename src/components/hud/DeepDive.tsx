@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { StockNode } from '../types';
+import { StockNode } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../lib/utils';
+import { cn } from '../../lib/utils';
 import { 
   Building2, 
   MapPin, 
@@ -43,13 +43,22 @@ export default function DeepDive({ stock, onClose }: DeepDiveProps) {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/market/history/${stock.ticker}`);
-        if (!res.ok) throw new Error('History Fetch Failed');
+        const historyUrl = new URL(`/api/market/history/${stock.ticker}`, window.location.origin);
+        const res = await fetch(historyUrl.toString());
         const data = await res.json();
-        setHistory(data);
-      } catch (e) {
+        
+        if (!res.ok) {
+            throw new Error(data.error || 'History Fetch Failed');
+        }
+        
+        if (data.length === 0) {
+            setError('NO_HISTORICAL_DATA_AVAILABLE');
+        } else {
+            setHistory(data);
+        }
+      } catch (e: any) {
         console.error(e);
-        setError('UNABLE_TO_SYNC_HISTORICAL_DATA');
+        setError(e.message === 'INVALID_OR_DELISTED_SYMBOL' ? 'SIGNAL_ORIGIN_DELISTED_OR_PRIVATE' : 'UNABLE_TO_SYNC_HISTORICAL_DATA');
       } finally {
         setLoading(false);
       }

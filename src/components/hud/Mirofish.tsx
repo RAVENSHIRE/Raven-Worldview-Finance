@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { StockNode, BacktestResult } from '../types';
+import { StockNode, BacktestResult } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../lib/utils';
+import { cn } from '../../lib/utils';
 import { 
     LineChart, 
     History, 
@@ -30,7 +30,8 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
     if (!selectedStock) return;
     setIsLoading(true);
     try {
-        const res = await fetch(`/api/backtest/${selectedStock.ticker}`);
+        const backtestUrl = new URL(`/api/backtest/${selectedStock.ticker}`, window.location.origin);
+        const res = await fetch(backtestUrl.toString());
         const data = await res.json();
         setBacktest(data);
     } catch (e) {

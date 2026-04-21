@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
-import { ChatMessage, StockNode } from '../types';
+import { ChatMessage, StockNode } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, Bot, User, Sparkles, BrainCircuit } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn } from '../../lib/utils';
 
 // Prompt for the specialized finance agent
 const SYSTEM_PROMPT = `You are the Finance-Worldview AI Agent, an elite quant strategist and macro analyst.

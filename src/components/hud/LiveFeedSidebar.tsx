@@ -1,6 +1,6 @@
-import { FinanceEvent } from '../types';
+import { FinanceEvent } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../lib/utils';
+import { cn } from '../../lib/utils';
 import { Ship, Rocket, Cpu, BarChart2, Bell, Globe, Newspaper } from 'lucide-react';
 
 interface LiveFeedSidebarProps {
