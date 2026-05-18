@@ -126,17 +126,21 @@ async function startServer() {
   const PORT = parseInt(process.env.PORT || '3000', 10);
 
   // ── Redis Setup ──
-  const redisCache = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
-  const redisSub   = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+  const redisOpts = {
+    url: process.env.REDIS_URL || 'redis://localhost:6379',
+    socket: { reconnectStrategy: false as const },
+  };
+  const redisCache = createClient(redisOpts);
+  const redisSub   = createClient(redisOpts);
 
-  redisCache.on('error', err => console.error('[REDIS:CACHE] Error:', err));
-  redisSub.on('error',   err => console.error('[REDIS:SUB] Error:',   err));
+  redisCache.on('error', () => {});
+  redisSub.on('error',   () => {});
 
   try {
     await Promise.all([redisCache.connect(), redisSub.connect()]);
     console.log('[REDIS] Cache + Sub clients connected');
   } catch (err) {
-    console.error('[REDIS] Connection failed. Running without Redis cache/pubsub.', err);
+    console.warn('[REDIS] Not available — running without cache/pubsub.');
   }
 
   const cache    = new MarketDataCache(redisCache);
