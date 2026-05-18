@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -128,7 +129,7 @@ async function startServer() {
   // ── Redis Setup ──
   const redisOpts = {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
-    socket: { reconnectStrategy: false as const },
+    socket: { connectTimeout: 2_000, reconnectStrategy: false as const },
   };
   const redisCache = createClient(redisOpts);
   const redisSub   = createClient(redisOpts);
@@ -139,8 +140,10 @@ async function startServer() {
   try {
     await Promise.all([redisCache.connect(), redisSub.connect()]);
     console.log('[REDIS] Cache + Sub clients connected');
-  } catch (err) {
+  } catch {
     console.warn('[REDIS] Not available — running without cache/pubsub.');
+    redisCache.disconnect().catch(() => {});
+    redisSub.disconnect().catch(() => {});
   }
 
   const cache    = new MarketDataCache(redisCache);
