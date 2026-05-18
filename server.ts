@@ -36,7 +36,7 @@ class MarketDataCache {
   private readonly L1_TTL_MS = 30_000; // 30s
   private readonly L2_TTL_S  = 35;     // 35s
 
-  constructor(private redisClient: any) {}
+  constructor(private redisClient: ReturnType<typeof createClient> | null) {}
 
   private makeKey(symbols: string[]): string {
     return `market:batch:${crypto.createHash('md5').update(symbols.sort().join(',')).digest('hex')}`;
@@ -44,22 +44,19 @@ class MarketDataCache {
 
   async get<T>(symbols: string[]): Promise<T | null> {
     const key = this.makeKey(symbols);
-    
-    // L1 Check
+
     const l1 = this.l1Cache.get(key);
     if (l1 && (Date.now() - l1.cachedAt < l1.ttlMs)) return l1.data;
 
-    // L2 Check (Redis)
-    try {
-      const l2 = await this.redisClient.get(key);
-      if (l2) {
-        const data = JSON.parse(l2);
-        // Hydrate L1
-        this.l1Cache.set(key, { data, cachedAt: Date.now(), ttlMs: this.L1_TTL_MS });
-        return data;
-      }
-    } catch (err) {
-      console.warn('[CACHE] Redis L2 read error:', err);
+    if (this.redisClient?.isOpen) {
+      try {
+        const l2 = await this.redisClient.get(key);
+        if (l2) {
+          const data = JSON.parse(l2);
+          this.l1Cache.set(key, { data, cachedAt: Date.now(), ttlMs: this.L1_TTL_MS });
+          return data;
+        }
+      } catch {}
     }
     return null;
   }
@@ -67,10 +64,10 @@ class MarketDataCache {
   async set<T>(symbols: string[], data: T): Promise<void> {
     const key = this.makeKey(symbols);
     this.l1Cache.set(key, { data, cachedAt: Date.now(), ttlMs: this.L1_TTL_MS });
-    try {
-      await this.redisClient.setEx(key, this.L2_TTL_S, JSON.stringify(data));
-    } catch (err) {
-      console.warn('[CACHE] Redis L2 write error:', err);
+    if (this.redisClient?.isOpen) {
+      try {
+        await this.redisClient.setEx(key, this.L2_TTL_S, JSON.stringify(data));
+      } catch {}
     }
   }
 }
@@ -126,24 +123,26 @@ async function startServer() {
   const httpServer = createServer(app);
   const PORT = parseInt(process.env.PORT || '3000', 10);
 
-  // ── Redis Setup ──
-  const redisOpts = {
-    url: process.env.REDIS_URL || 'redis://localhost:6379',
-    socket: { connectTimeout: 2_000, reconnectStrategy: false as const },
-  };
-  const redisCache = createClient(redisOpts);
-  const redisSub   = createClient(redisOpts);
+  // ── Redis Setup (optional — only when REDIS_URL is explicitly set) ──
+  let redisCache: ReturnType<typeof createClient> | null = null;
+  let redisSub:   ReturnType<typeof createClient> | null = null;
 
-  redisCache.on('error', () => {});
-  redisSub.on('error',   () => {});
-
-  try {
-    await Promise.all([redisCache.connect(), redisSub.connect()]);
-    console.log('[REDIS] Cache + Sub clients connected');
-  } catch {
-    console.warn('[REDIS] Not available — running without cache/pubsub.');
-    redisCache.disconnect().catch(() => {});
-    redisSub.disconnect().catch(() => {});
+  if (process.env.REDIS_URL) {
+    const redisOpts = { url: process.env.REDIS_URL };
+    redisCache = createClient(redisOpts);
+    redisSub   = createClient(redisOpts);
+    redisCache.on('error', () => {});
+    redisSub.on('error',   () => {});
+    try {
+      await Promise.all([redisCache.connect(), redisSub.connect()]);
+      console.log('[REDIS] Cache + Sub clients connected');
+    } catch {
+      console.warn('[REDIS] Connection failed — running without cache/pubsub.');
+      redisCache = null;
+      redisSub   = null;
+    }
+  } else {
+    console.log('[REDIS] REDIS_URL not set — skipping (L1 cache only)');
   }
 
   const cache    = new MarketDataCache(redisCache);
@@ -189,7 +188,7 @@ async function startServer() {
 
   // ── Redis Subscriptions ──
   const CHANNELS = ['raven:geo', 'raven:equity', 'raven:agent'];
-  if (redisSub.isOpen) {
+  if (redisSub?.isOpen) {
     await redisSub.subscribe(CHANNELS, (message, channel) => {
       try {
         const payload = JSON.parse(message);
