@@ -365,6 +365,4 @@ export default function App() {
       </aside>
     </div>
   );
-    </div>
-  );
 }
