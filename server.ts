@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import yf from 'yahoo-finance2';
 import { createClient } from 'redis';
 import crypto from 'crypto';
+import { createIngestPipeline } from './workers/ingest';
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
 interface ConnectedClient {
@@ -273,6 +274,11 @@ class WatchlistStore {
     await this.hydrate();
     return this.mem.has(ticker);
   }
+
+  // Synchronous view of currently-known tickers (in-memory mirror only).
+  tickersSync(): string[] {
+    return Array.from(this.mem.keys());
+  }
 }
 
 // ─── WEBSOCKET CLIENT REGISTRY ────────────────────────────────────────────────
@@ -339,8 +345,11 @@ async function startServer() {
     connectTimeout: 3000,
     reconnectStrategy: (retries: number) => Math.min(200 * 2 ** retries, 5000),
   };
-  const redisCache = createClient({ url: REDIS_URL, socket: redisSocket });
-  const redisSub   = createClient({ url: REDIS_URL, socket: redisSocket });
+  // disableOfflineQueue: commands issued while disconnected reject immediately
+  // (callers catch and fall back to memory) instead of queueing forever and
+  // hanging every request until Redis appears.
+  const redisCache = createClient({ url: REDIS_URL, socket: redisSocket, disableOfflineQueue: true });
+  const redisSub   = createClient({ url: REDIS_URL, socket: redisSocket, disableOfflineQueue: true });
 
   // Log the first few connection errors, then go quiet (the background retry
   // loop would otherwise spam one line every few seconds).
@@ -434,7 +443,10 @@ async function startServer() {
     await redisSub.subscribe(CHANNELS, handleChannelMessage);
     console.log(`[REDIS:SUB] Subscribed to: ${CHANNELS.join(', ')}`);
   };
-  if (redisSub.isOpen) {
+  // NOTE: isReady (connected + ready), not isOpen — isOpen is true from the
+  // moment connect() is called, including while stuck in a reconnect loop, and
+  // awaiting subscribe() on a non-ready client blocks boot forever.
+  if (redisSub.isReady) {
     await subscribeChannels();
   } else {
     redisSub.once('ready', () => {
@@ -450,6 +462,68 @@ async function startServer() {
       clients: registry.count,
       uptime: process.uptime()
     });
+  });
+
+  // ── Daily Ingestion Pipeline (movers → Perplexity intel → hybrid store) ──
+  const UNIVERSE_TICKERS = ['PLTR', 'RKLB', 'MSTR', 'ARM', 'ASML', 'COIN', 'SMCI', 'NESN', 'UBSG', 'SAN.MC', 'BBVA.MC', 'ITX.MC', 'AAPL', 'TSLA', 'NVDA'];
+  const ingest = createIngestPipeline({
+    redis: redisCache,
+    yahooFinance,
+    broadcast: (payload) => registry.broadcast(payload),
+    universeTickers: () => Array.from(new Set([...UNIVERSE_TICKERS, ...watchlist.tickersSync()])),
+  });
+  ingest.startScheduler();
+
+  // Latest isolated top-10 winners/losers snapshot.
+  app.get('/api/movers', async (_req, res) => {
+    const movers = await ingest.getMovers();
+    if (!movers) return res.status(404).json({ error: 'NO_MOVERS_YET', hint: 'POST /api/ingest/run to trigger a run' });
+    res.json(movers);
+  });
+
+  // Structured intelligence report for one ticker.
+  app.get('/api/intel/:ticker', async (req, res) => {
+    const ticker = req.params.ticker.trim().toUpperCase();
+    const report = await ingest.store.get(ticker);
+    if (!report) return res.status(404).json({ error: 'NO_INTEL', ticker });
+    res.json(report);
+  });
+
+  // Manual trigger (testing / catch-up outside the 21:05 UTC schedule).
+  app.post('/api/ingest/run', async (_req, res) => {
+    try {
+      const movers = await ingest.runDailyIngest();
+      res.status(202).json({ ok: true, queued: movers.winners.length + movers.losers.length });
+    } catch (e: any) {
+      res.status(500).json({ error: 'INGEST_FAILED', details: e?.message });
+    }
+  });
+
+  // Queue a single ticker for intel enrichment (e.g. after a watchlist add).
+  app.post('/api/intel/:ticker/refresh', async (req, res) => {
+    const ticker = req.params.ticker.trim().toUpperCase();
+    await ingest.enqueueTicker(ticker);
+    res.status(202).json({ ok: true, ticker });
+  });
+
+  // ── Multi-Signal Intake ──
+  // Accepts raw signal payloads from any source layer: screener exports,
+  // 13F/SEC filing excerpts, tweets, Substack posts, YouTube transcripts,
+  // forwarded IR emails. JSON { source, text } or raw text/plain (?source=).
+  const SIGNAL_SOURCES = new Set(['screener', '13f', 'sec-filing', 'twitter', 'substack', 'youtube', 'email', 'other']);
+  app.post('/api/signal', async (req, res) => {
+    const body: any = req.body;
+    const text = (typeof body === 'string' ? body : body?.text || '').trim();
+    const source = String((typeof body === 'object' && body?.source) || req.query.source || 'other').toLowerCase();
+    if (!text) return res.status(400).json({ error: 'EMPTY_PAYLOAD' });
+    if (!SIGNAL_SOURCES.has(source)) return res.status(400).json({ error: 'UNKNOWN_SOURCE', allowed: [...SIGNAL_SOURCES] });
+    await ingest.enqueueSignal(source as any, text.slice(0, 200_000));
+    res.status(202).json({ ok: true, source, queued: true });
+  });
+
+  app.get('/api/signals', async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit as string || '50', 10) || 50, 200);
+    res.json(await ingest.getSignals(limit));
   });
 
   // PostgreSQL stub for /api/universe (Foundation Phase Task 4)

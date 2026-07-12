@@ -132,6 +132,35 @@ export type FilterVersion = {
   createdAt: string;
 };
 
+// ─── INTELLIGENCE PIPELINE ────────────────────────────────────────────────────
+// Output of the daily movers ingestion worker (Perplexity primary, LLM fallback).
+
+export type SupplyChainNode = {
+  name: string;
+  relation: 'supplier' | 'customer';
+  lat?: number;
+  lon?: number;
+};
+
+export type IntelReport = {
+  ticker: string;
+  catalystSummary: string;
+  informationAsymmetryScore: number;   // 1-10
+  narrativeConsensus: string;          // e.g. UNDERVALUED / STRONG ACCUMULATION
+  supplyChain: SupplyChainNode[];
+  source: 'perplexity' | 'fallback-llm' | 'stub';
+  generatedAt: string;
+};
+
+export type MoverEntry = {
+  ticker: string;
+  name: string;
+  price: number;
+  change1d: number;
+  volume: number;
+  direction: 'winner' | 'loser';
+};
+
 // A user-added company placed on the globe. Resolved server-side from a live
 // quote + an approximate exchange location.
 export type WatchlistNode = {
