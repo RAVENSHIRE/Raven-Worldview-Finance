@@ -8,6 +8,7 @@ import LiveFeedSidebar from './components/hud/LiveFeedSidebar';
 import AIChat from './components/hud/AIChat';
 import Mirofish from './components/hud/Mirofish';
 import DeepDive from './components/hud/DeepDive';
+import ErrorBoundary from './components/ErrorBoundary';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -255,7 +256,9 @@ export default function App() {
         )}
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
             <div className="flex-[0.6] min-h-[220px]">
-                <PreMoverScorecard stocks={processedStocks} />
+                <ErrorBoundary label="SCORECARD">
+                  <PreMoverScorecard stocks={processedStocks} />
+                </ErrorBoundary>
             </div>
 
             <div className="flex-1 overflow-hidden flex flex-col">
@@ -322,25 +325,27 @@ export default function App() {
             transition={{ duration: 0.4 }}
             className="w-full h-full pb-[35%]"
           >
-            {viewMode === 'globe' ? (
-              <GlobeView 
-                stocks={filteredStocks} 
-                events={events}
-                activeLayers={activeLayers}
-                onSelectStock={setSelectedStock} 
-                selectedStock={selectedStock}
-                colorMode={colorMode}
-              />
-            ) : (
-                <FlatView 
+            <ErrorBoundary label="SPATIAL_CANVAS">
+              {viewMode === 'globe' ? (
+                <GlobeView
                   stocks={filteredStocks}
                   events={events}
                   activeLayers={activeLayers}
-                  onSelectStock={setSelectedStock} 
+                  onSelectStock={setSelectedStock}
                   selectedStock={selectedStock}
                   colorMode={colorMode}
                 />
-            )}
+              ) : (
+                  <FlatView
+                    stocks={filteredStocks}
+                    events={events}
+                    activeLayers={activeLayers}
+                    onSelectStock={setSelectedStock}
+                    selectedStock={selectedStock}
+                    colorMode={colorMode}
+                  />
+              )}
+            </ErrorBoundary>
           </motion.div>
         </AnimatePresence>
 
@@ -370,12 +375,14 @@ export default function App() {
             </div>
 
             <div className="flex-1 min-h-0 overflow-hidden p-2">
-                <EquityMonitor 
-                  stocks={filteredStocks} 
-                  onSelectStock={setSelectedStock} 
-                  selectedStock={selectedStock}
-                  showSignals={showSignals}
-                />
+                <ErrorBoundary label="EQUITY_MONITOR">
+                  <EquityMonitor
+                    stocks={filteredStocks}
+                    onSelectStock={setSelectedStock}
+                    selectedStock={selectedStock}
+                    showSignals={showSignals}
+                  />
+                </ErrorBoundary>
             </div>
         </div>
 
@@ -394,28 +401,36 @@ export default function App() {
       {/* Right Rail HUD */}
       <aside className="border-l border-terminal-line bg-terminal-panel flex flex-col p-0 z-20">
          <div className="flex-1 overflow-hidden border-b border-terminal-line h-1/2">
-             <AIChat selectedStock={selectedStock} swarmMessages={swarmMessages} />
+             <ErrorBoundary label="AI_CHAT">
+               <AIChat selectedStock={selectedStock} swarmMessages={swarmMessages} />
+             </ErrorBoundary>
          </div>
          <div className="flex-1 overflow-hidden h-1/2">
-             {selectedStock ? (
-                 <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
-             ) : (
-                 <Mirofish selectedStock={selectedStock} />
-             )}
+             <ErrorBoundary label="INTEL_PANEL">
+               {selectedStock ? (
+                   <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
+               ) : (
+                   <Mirofish selectedStock={selectedStock} />
+               )}
+             </ErrorBoundary>
          </div>
       </aside>
 
       {/* Bottom Data Convergence HUD */}
       <footer className="col-span-3 border-t border-terminal-line bg-terminal-panel grid grid-cols-[1fr_320px] overflow-hidden">
         <div className="border-r border-terminal-line overflow-hidden p-0">
-          <EquityMonitor 
-            stocks={filteredStocks} 
-            onSelectStock={setSelectedStock} 
-            selectedStock={selectedStock} 
-          />
+          <ErrorBoundary label="EQUITY_MONITOR">
+            <EquityMonitor
+              stocks={filteredStocks}
+              onSelectStock={setSelectedStock}
+              selectedStock={selectedStock}
+            />
+          </ErrorBoundary>
         </div>
         <div className="overflow-hidden bg-black/20">
-           <LiveFeedSidebar events={events} />
+           <ErrorBoundary label="LIVE_FEED">
+             <LiveFeedSidebar events={events} />
+           </ErrorBoundary>
          </div>
       </footer>
     </div>
