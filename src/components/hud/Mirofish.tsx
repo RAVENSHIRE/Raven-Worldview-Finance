@@ -55,12 +55,26 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
 
   const loadReport = async (id: string) => {
     if (activeReport?.id === id) return;
+
+    // We already hold the meta in the index; use it to (a) reflect the
+    // selection immediately and (b) render a failure line in place rather
+    // than silently leaving the previous report on screen.
+    const meta = reports.find(r => r.id === id);
+    const withText = (text: string) =>
+      meta ? { id: meta.id, text, source: meta.source, filterVersionId: meta.filterVersionId, capturedAt: meta.capturedAt } : null;
+
+    setActiveReport(withText('Loading report…'));
     try {
       const url = new URL(`/api/screen/report/${id}`, window.location.origin);
       const res = await fetch(url.toString());
-      if (res.ok) setActiveReport(await res.json());
+      if (res.ok) {
+        setActiveReport(await res.json());
+      } else {
+        setActiveReport(withText(`⚠ Failed to load report (${res.status})`));
+      }
     } catch (e) {
       console.error('SCREEN_REPORT_FETCH_ERROR', e);
+      setActiveReport(withText('⚠ Failed to load report (network error)'));
     }
   };
 

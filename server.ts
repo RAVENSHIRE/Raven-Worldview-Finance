@@ -91,6 +91,9 @@ class ScreenStore {
   private index: string[] = []; // report ids, newest first
   private readonly INDEX_KEY = 'screen:reports';
   private readonly KEY_PREFIX = 'screen:report:';
+  // Cap the in-memory mirror so a long-running process doesn't grow unbounded.
+  // Redis remains the source of truth; older entries are re-hydrated on demand.
+  private readonly MAX_MEM_REPORTS = 500;
 
   constructor(private redisClient: any) {}
 
@@ -99,6 +102,10 @@ class ScreenStore {
   async saveReport(report: StoredReport): Promise<void> {
     this.mem.set(report.id, report);
     this.index.unshift(report.id);
+    // Evict oldest ids (index is newest-first) from both mem and index.
+    if (this.index.length > this.MAX_MEM_REPORTS) {
+      for (const id of this.index.splice(this.MAX_MEM_REPORTS)) this.mem.delete(id);
+    }
     try {
       await this.redisClient.set(this.key(report.id), JSON.stringify(report));
       await this.redisClient.lPush(this.INDEX_KEY, report.id);
