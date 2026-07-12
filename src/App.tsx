@@ -209,275 +209,162 @@ export default function App() {
   }, [processedStocks, searchQuery]);
 
   return (
-    <div className="grid grid-rows-[48px_1fr_200px] grid-cols-[260px_1fr_320px] h-screen w-screen overflow-hidden bg-terminal-bg font-mono selection:bg-terminal-cyan/30 text-white">
-      {/* Header HUD */}
-      <header className="col-span-3 border-b border-terminal-line bg-terminal-panel flex items-center justify-between px-5 z-50 shadow-lg">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 group cursor-pointer">
-            <div className="p-1 bg-terminal-cyan/10 rounded-sm">
-              <Activity className="text-terminal-cyan animate-pulse" size={16} />
-            </div>
-            <span className="font-black tracking-widest text-[12px] text-white uppercase group-hover:text-terminal-cyan transition-colors">
-              PRE-MOVER <span className="text-terminal-cyan underline decoration-terminal-cyan/30">SYSTEMS</span> <span className="text-[9px] opacity-30 font-normal ml-3">CORE_PROTO v5.0_SPATIAL</span>
-            </span>
-          </div>
-          
-          <div className="h-4 w-px bg-terminal-line mx-2" />
-          
-          <div className="flex gap-1 p-0.5 bg-black/40 border border-terminal-line rounded-sm">
-            <button 
-              onClick={() => setViewMode('globe')}
-              className={cn("p-1.5 transition-all rounded-[1px]", viewMode === 'globe' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
-            >
-              <Globe size={13} />
-            </button>
-            <button 
-              onClick={() => setViewMode('flat')}
-              className={cn("p-1.5 transition-all rounded-[1px]", viewMode === 'flat' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
-            >
-              <MapIcon size={13} />
-            </button>
-          </div>
+    <div className="grid grid-rows-[36px_1fr] grid-cols-[15%_55%_30%] h-screen w-screen overflow-hidden bg-[#05070a] font-mono selection:bg-terminal-cyan/30 text-white">
+      {/* Command Line Header */}
+      <header className="col-span-3 border-b border-[#1c2330] bg-[#0c0f14] flex items-center px-5 z-50 shadow-lg">
+        <div className="flex items-center gap-3 flex-1">
+          <Terminal size={13} className="text-terminal-cyan" />
+          <span className="text-[10px] text-terminal-cyan font-black tracking-widest">&gt;</span>
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="LOAD_SIGNAL_NODE..."
+            className="bg-transparent border-none outline-none text-[10px] text-white placeholder:text-zinc-700 tracking-widest flex-1 max-w-xs"
+          />
         </div>
 
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-1 bg-black/40 rounded-sm p-1 border border-terminal-line">
-            <button 
-              onClick={() => setColorMode('change')}
-              className={cn("px-3 py-1 text-[9px] rounded-sm transition-colors uppercase font-black", colorMode === 'change' ? "bg-zinc-800 text-terminal-cyan border border-terminal-cyan/20" : "text-terminal-text-secondary hover:text-white")}
-            >REAL_TIME_1D</button>
-            <button 
-              onClick={() => setColorMode('trump_beta')}
-              className={cn("px-3 py-1 text-[9px] rounded-sm transition-colors uppercase font-black", colorMode === 'trump_beta' ? "bg-zinc-800 text-terminal-gold border border-terminal-gold/20" : "text-terminal-text-secondary hover:text-white")}
-            >MACRO_REVAL_β</button>
+        <div className="flex items-center gap-4 ml-auto">
+          <div className="flex items-center gap-1.5 text-[8px] uppercase tracking-widest text-zinc-600">
+            <span>MARKET_SYNC:</span>
+            <div className={cn("w-1.5 h-1.5 rounded-full", isRefreshing ? "bg-terminal-gold animate-pulse" : "bg-terminal-green animate-pulse")} />
+            <span>{isRefreshing ? 'SYNCING' : 'LIVE'}</span>
           </div>
-          
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-terminal-text-secondary" size={12} />
-            <input 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="SEARCH_SIGNAL_NODE..."
-              className="terminal-input pl-8 w-52 placeholder:text-zinc-800 tracking-widest text-[10px]"
-            />
-          </div>
-
-          <div className="flex gap-4 items-center">
-            <button 
-              onClick={fetchBatch}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1 text-[9px] font-black uppercase tracking-widest border transition-all rounded-sm",
-                isRefreshing ? "bg-terminal-cyan text-black border-terminal-cyan" : "bg-black/40 text-terminal-text-secondary border-terminal-line hover:border-terminal-cyan hover:text-white"
-              )}
-              disabled={isRefreshing}
-            >
-              <RefreshCw size={12} className={cn(isRefreshing && "animate-spin")} />
-              <span>{isRefreshing ? 'SYNCING...' : 'REFRESH_DATA'}</span>
-            </button>
-            <Terminal size={14} className="text-zinc-600 hover:text-terminal-cyan cursor-pointer transition-colors" />
-          </div>
+          <div className="w-px h-4 bg-[#1c2330]" />
+          <span className="text-[8px] text-zinc-700 font-black">UTC {new Date().toLocaleTimeString('en-US', { hour12: false }).slice(0, 5)}</span>
         </div>
       </header>
 
-      {/* Left Rail HUD */}
-      <aside className="border-r border-terminal-line bg-terminal-panel flex flex-col p-4 z-10 overflow-hidden select-none gap-4">
+      {/* Left Column: Operational Layers (15%) */}
+      <aside className="border-r border-[#1c2330] bg-[#0c0f14] flex flex-col p-3 z-10 overflow-y-auto select-none gap-3">
+        <div>
+          <div className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan mb-2">▼ MARKET REGIONS</div>
+          <div className="space-y-1.5">
+            {['NORTH AMERICA', 'EUROPEAN BLOC', 'ASIA-PACIFIC'].map((region, idx) => (
+              <label key={region} className="flex items-center gap-2 cursor-pointer group text-[9px] hover:text-terminal-cyan transition-colors">
+                <input
+                  type="checkbox"
+                  defaultChecked={idx < 2}
+                  className="w-3 h-3 cursor-pointer"
+                  onChange={() => toggleLayer(region)}
+                />
+                <span className="text-zinc-400 group-hover:text-white">{region}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="border-t border-[#1c2330] pt-3">
+          <div className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan mb-2">▼ SPATIAL OVERLAYS</div>
+          <div className="space-y-1.5">
+            {['CORE EXCHANGES', 'ARBITRAGE CORRIDORS', 'SUPPLY CHAINS'].map((overlay, idx) => (
+              <label key={overlay} className="flex items-center gap-2 cursor-pointer group text-[9px] hover:text-terminal-cyan transition-colors">
+                <input
+                  type="checkbox"
+                  defaultChecked={idx < 2}
+                  className="w-3 h-3 cursor-pointer"
+                  onChange={() => toggleLayer(overlay)}
+                />
+                <span className="text-zinc-400 group-hover:text-white">{overlay}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
         {syncError && (
-          <div className="bg-terminal-red/10 border border-terminal-red/40 p-3 mb-2 rounded-sm flex flex-col gap-1 items-start relative overflow-hidden group">
-            <div className="absolute top-0 right-0 p-1 opacity-20 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setSyncError(null)}>
-              <Activity size={10} className="rotate-45" />
-            </div>
-            <div className="flex items-center gap-2 text-terminal-red">
-               <AlertCircle size={12} className="shrink-0" />
-               <span className="text-[10px] font-black uppercase tracking-widest">{syncError.code}</span>
-            </div>
-            <p className="text-[8px] text-white/50 leading-tight uppercase font-mono">{syncError.message}</p>
+          <div className="mt-auto text-[8px] text-terminal-red uppercase tracking-widest border border-terminal-red/40 bg-terminal-red/5 p-2 rounded-sm">
+            <div className="font-black mb-1">{syncError.code}</div>
+            <div className="text-white/50">{syncError.message}</div>
           </div>
         )}
-        <div className="flex-1 overflow-hidden flex flex-col gap-4">
-            <div className="flex-[0.5] min-h-[180px]">
-                <ErrorBoundary label="SCORECARD">
-                  <PreMoverScorecard stocks={processedStocks} />
-                </ErrorBoundary>
-            </div>
-
-            <div className="flex-[0.6] min-h-0 overflow-hidden flex flex-col border-t border-terminal-line/50 pt-4">
-                <ErrorBoundary label="WATCHLIST">
-                  <WatchlistPanel onSelect={(n) => setSelectedStock(watchlistAsStock(n))} />
-                </ErrorBoundary>
-            </div>
-
-            <div className="flex-[0.5] overflow-hidden flex flex-col border-t border-terminal-line/50 pt-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Layers size={12} className="text-terminal-cyan" />
-                <span className="text-[10px] font-black uppercase tracking-widest text-white">Operational Layers</span>
-              </div>
-              <div className="space-y-3 bg-black/20 p-4 border border-terminal-line rounded-sm">
-                 {['AIS Corridors', 'Aerospace Tracker', 'Crypto Nodes', 'Signal Heatmap'].map(layer => (
-                   <div 
-                    key={layer} 
-                    onClick={() => toggleLayer(layer)}
-                    className={cn(
-                        "flex items-center justify-between text-[10px] cursor-pointer group transition-all",
-                        activeLayers.includes(layer) ? "text-zinc-300" : "text-zinc-700 hover:text-zinc-500"
-                    )}
-                   >
-                      <span className="flex items-center gap-2">
-                        <ChevronRight size={10} className={cn("transition-transform", activeLayers.includes(layer) ? "rotate-90 text-terminal-cyan" : "")} />
-                        {layer}
-                      </span>
-                      <div className={cn(
-                        "w-6 h-3 rounded-full relative transition-colors",
-                        activeLayers.includes(layer) ? "bg-terminal-cyan/20 border border-terminal-cyan/40" : "bg-zinc-900 border border-zinc-800"
-                      )}>
-                        <div className={cn(
-                            "absolute top-0.5 w-2 h-2 rounded-full transition-all duration-300",
-                            activeLayers.includes(layer) ? "right-0.5 bg-terminal-cyan shadow-[0_0_8px_#00E0FF]" : "right-3.5 bg-zinc-700"
-                        )} />
-                      </div>
-                   </div>
-                 ))}
-              </div>
-            </div>
-        </div>
-
-        <div className="mt-auto pt-4 border-t border-terminal-line/50">
-            <div className="mb-4 bg-terminal-gold/5 border border-terminal-gold/20 p-2.5 rounded-sm">
-                <div className="flex items-center gap-2 mb-1.5">
-                    <ShieldAlert size={12} className="text-terminal-gold" />
-                    <span className="text-[9px] font-black text-terminal-gold uppercase">System_Alert</span>
-                </div>
-                <p className="text-[8px] leading-tight text-white/60 italic uppercase tracking-tighter">
-                   Information asymmetry localized. <br/> Cross-asset correlation active.
-                </p>
-            </div>
-            <div className="flex items-center justify-between text-[9px] text-zinc-700 font-bold tracking-widest">
-              <span>SYNC_LATENCY</span>
-              <span className="text-terminal-green flex items-center gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-terminal-green animate-pulse" /> +42ms
-              </span>
-            </div>
-        </div>
       </aside>
 
-      {/* 3D Canvas Viewport */}
-      <main className="relative bg-[#020202] overflow-hidden group">
-        <AnimatePresence mode="wait">
-          <motion.div 
-            key={viewMode}
-            initial={{ opacity: 0, scale: 0.99 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.01 }}
-            transition={{ duration: 0.4 }}
-            className="w-full h-full pb-[35%]"
-          >
-            <ErrorBoundary label="SPATIAL_CANVAS">
-              {viewMode === 'globe' ? (
-                <GlobeView
-                  stocks={filteredStocks}
-                  events={events}
-                  activeLayers={activeLayers}
-                  onSelectStock={setSelectedStock}
-                  selectedStock={selectedStock}
-                  colorMode={colorMode}
-                />
-              ) : (
-                  <FlatView
-                    stocks={filteredStocks}
-                    events={events}
-                    activeLayers={activeLayers}
-                    onSelectStock={setSelectedStock}
-                    selectedStock={selectedStock}
-                    colorMode={colorMode}
-                  />
-              )}
-            </ErrorBoundary>
-          </motion.div>
-        </AnimatePresence>
+      {/* Center Column: Cinematic Global View (55%) */}
+      <main className="relative bg-[#02020a] overflow-hidden group border-r border-[#1c2330]">
+        <ErrorBoundary label="SPATIAL_CANVAS">
+          {viewMode === 'globe' ? (
+            <GlobeView
+              stocks={filteredStocks}
+              events={events}
+              activeLayers={activeLayers}
+              onSelectStock={setSelectedStock}
+              selectedStock={selectedStock}
+              colorMode={colorMode}
+            />
+          ) : (
+            <FlatView
+              stocks={filteredStocks}
+              events={events}
+              activeLayers={activeLayers}
+              onSelectStock={setSelectedStock}
+              selectedStock={selectedStock}
+              colorMode={colorMode}
+            />
+          )}
+        </ErrorBoundary>
 
-        {/* Dynamic Context Workspace overlay */}
-        <div className="absolute bottom-0 left-0 right-0 h-[35%] bg-terminal-bg/95 backdrop-blur-md border-t border-terminal-line z-20 flex flex-col pointer-events-auto">
-            <div className="flex items-center gap-4 px-4 py-2 border-b border-terminal-line bg-terminal-panel/30">
-                <div className="flex items-center gap-2">
-                    <Activity size={10} className="text-terminal-cyan" />
-                    <span className="text-[9px] font-black uppercase tracking-widest text-terminal-cyan">Monitor_Node_Active</span>
-                </div>
-                <div className="h-4 w-px bg-terminal-line" />
-                <div className="flex items-center gap-2">
-                    <span className="text-[8px] text-terminal-text-secondary uppercase">Signals:</span>
-                    <button 
-                      onClick={() => setShowSignals(!showSignals)}
-                      className={cn(
-                        "w-7 h-3.5 rounded-full border border-terminal-line relative transition-all",
-                        showSignals ? "bg-terminal-cyan/20 border-terminal-cyan" : "bg-transparent"
-                      )}
-                    >
-                      <motion.div 
-                        layout 
-                        className={cn("absolute top-0.5 w-2 h-2 rounded-full", showSignals ? "bg-terminal-cyan right-0.5" : "bg-zinc-600 left-0.5")}
-                      />
-                    </button>
-                </div>
-            </div>
+        {/* Aurora Borealis Effect Overlay */}
+        <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#1a4d3e]/20 via-[#00ff8044] to-transparent pointer-events-none" />
 
-            <div className="flex-1 min-h-0 overflow-hidden p-2">
-                <ErrorBoundary label="EQUITY_MONITOR">
-                  <EquityMonitor
-                    stocks={filteredStocks}
-                    onSelectStock={setSelectedStock}
-                    selectedStock={selectedStock}
-                    showSignals={showSignals}
-                  />
-                </ErrorBoundary>
-            </div>
-        </div>
-
-        {/* Spatial Information HUD Overlay */}
-        <div className="absolute top-6 left-6 pointer-events-none select-none">
-           <div className="stat-card bg-black/60 border-terminal-line/80 backdrop-blur-xl mb-0 py-2.5 px-4 shadow-2xl border-l-[3px] border-l-terminal-cyan">
-              <span className="text-[8px] text-terminal-text-secondary uppercase tracking-[0.2em] mb-1.5 block font-bold">Spatial_Intel_Engine</span>
-              <div className="flex items-center gap-3">
-                <div className="w-2.5 h-2.5 rounded-full bg-terminal-cyan shadow-[0_0_12px_#00E0FF] animate-pulse" />
-                <span className="text-[12px] font-black text-white uppercase tracking-widest">GRID_ACTIVE: {activeLayers.length} LAYERS</span>
-              </div>
-           </div>
+        {/* Ticker Tape Bottom */}
+        <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-[#0c0f14] to-transparent border-t border-[#1c2330] px-4 py-2 flex items-center gap-6 overflow-x-auto no-scrollbar text-[8px] text-zinc-600 font-mono">
+          {filteredStocks.slice(0, 8).map(s => (
+            <span key={s.ticker} className="shrink-0 hover:text-terminal-cyan cursor-pointer transition-colors">
+              {s.ticker} <span className={s.change1d >= 0 ? 'text-terminal-green' : 'text-terminal-red'}>{s.change1d >= 0 ? '+' : ''}{Number(s.change1d).toFixed(2)}%</span>
+            </span>
+          ))}
         </div>
       </main>
 
-      {/* Right Rail HUD */}
-      <aside className="border-l border-terminal-line bg-terminal-panel flex flex-col p-0 z-20">
-         <div className="flex-1 overflow-hidden border-b border-terminal-line h-1/2">
-             <ErrorBoundary label="AI_CHAT">
-               <AIChat selectedStock={selectedStock} swarmMessages={swarmMessages} />
-             </ErrorBoundary>
-         </div>
-         <div className="flex-1 overflow-hidden h-1/2">
-             <ErrorBoundary label="INTEL_PANEL">
-               {selectedStock ? (
-                   <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
-               ) : (
-                   <Mirofish selectedStock={selectedStock} />
-               )}
-             </ErrorBoundary>
-         </div>
-      </aside>
-
-      {/* Bottom Data Convergence HUD */}
-      <footer className="col-span-3 border-t border-terminal-line bg-terminal-panel grid grid-cols-[1fr_320px] overflow-hidden">
-        <div className="border-r border-terminal-line overflow-hidden p-0">
-          <ErrorBoundary label="EQUITY_MONITOR">
-            <EquityMonitor
-              stocks={filteredStocks}
-              onSelectStock={setSelectedStock}
-              selectedStock={selectedStock}
-            />
-          </ErrorBoundary>
+      {/* Right Column: Watchlist Pipeline (30%) */}
+      <aside className="border-l border-[#1c2330] bg-[#0c0f14] flex flex-col p-3 z-20 overflow-y-auto">
+        <div className="mb-4">
+          <div className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan mb-2">▼ SCREENED ({watchlistNodes.filter(n => n.sector === 'screened').length})</div>
+          <div className="space-y-1.5">
+            {watchlistNodes.filter(n => n.sector === 'screened').slice(0, 3).map(node => (
+              <div
+                key={node.ticker}
+                onClick={() => setSelectedStock(watchlistAsStock(node))}
+                className="bg-[#1a1f2e] border border-[#1c2330] hover:border-terminal-cyan/40 p-2 rounded-sm cursor-pointer transition-all group"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[9px] font-black text-white">{node.ticker}</span>
+                  <span className={cn("text-[8px] font-bold", node.change1d >= 0 ? 'text-terminal-green' : 'text-terminal-red')}>
+                    {node.change1d >= 0 ? '+' : ''}{Number(node.change1d).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="text-[7px] text-zinc-600">
+                  ${Number(node.price).toFixed(2)} · {node.exchange}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="overflow-hidden bg-black/20">
-           <ErrorBoundary label="LIVE_FEED">
-             <LiveFeedSidebar events={events} />
-           </ErrorBoundary>
-         </div>
-      </footer>
+
+        <div className="border-t border-[#1c2330] pt-3 mb-4">
+          <div className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan mb-2">▼ DUE DILIGENCE (1)</div>
+          <div className="bg-[#1a1f2e] border border-[#1c2330] p-2 rounded-sm text-[8px] text-zinc-600">
+            <span className="text-white font-black">Monitor for signals…</span>
+          </div>
+        </div>
+
+        <div className="border-t border-[#1c2330] pt-3">
+          <div className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan mb-2">▼ ANALYSIS (2)</div>
+          <div className="space-y-1.5">
+            {watchlistNodes.slice(0, 2).map(node => (
+              <div
+                key={node.ticker}
+                onClick={() => setSelectedStock(watchlistAsStock(node))}
+                className="bg-[#1a1f2e] border border-[#1c2330] hover:border-terminal-cyan/40 p-2 rounded-sm cursor-pointer transition-all"
+              >
+                <div className="text-[8px] text-white font-bold">{node.ticker}</div>
+                <div className="text-[7px] text-zinc-600">${Number(node.price).toFixed(2)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
     </div>
   );
 }

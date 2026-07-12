@@ -1,18 +1,19 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: 'Courier New', Courier, monospace;
-  
-  --color-terminal-bg: #0A0A0B;
-  --color-terminal-panel: #141416;
-  --color-terminal-line: #28282A;
+  --font-sans: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Bloomberg-style night mode palette */
+  --color-terminal-bg: #05070a;
+  --color-terminal-panel: #0c0f14;
+  --color-terminal-line: #1c2330;
   --color-terminal-text-primary: #FFFFFF;
   --color-terminal-text-secondary: #8E9299;
-  --color-terminal-green: #00FF41;
-  --color-terminal-red: #FF3131;
-  --color-terminal-cyan: #00E0FF;
-  --color-terminal-gold: #D4AF37;
+  --color-terminal-green: #00ff66;
+  --color-terminal-red: #ff3844;
+  --color-terminal-cyan: #00f0ff;
+  --color-terminal-gold: #ffaa00;
 }
 
 @layer base {

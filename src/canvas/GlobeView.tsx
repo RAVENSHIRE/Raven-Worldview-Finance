@@ -37,21 +37,20 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
     if (!containerRef.current) return;
 
     const g = (Globe as any)()(containerRef.current)
-      // Self-contained surface: no CDN textures. Dark ocean sphere + glowing
-      // country polygons rendered from bundled world-atlas geometry.
-      .backgroundColor('#02020a')
+      // Night-mode aesthetic: ultra-dark background + glowing atmosphere
+      .backgroundColor('#020408')
       .showGlobe(true)
       .showAtmosphere(true)
-      .atmosphereColor('#00E0FF')
-      .atmosphereAltitude(0.18)
+      .atmosphereColor('#00FF88')
+      .atmosphereAltitude(0.25)
       // Country landmasses
       .polygonsData(COUNTRY_FEATURES)
-      .polygonCapColor(() => 'rgba(9, 20, 30, 0.85)')
-      .polygonSideColor(() => 'rgba(0, 224, 255, 0.06)')
-      .polygonStrokeColor(() => 'rgba(0, 224, 255, 0.55)')
+      .polygonCapColor(() => 'rgba(15, 25, 35, 0.75)')
+      .polygonSideColor(() => 'rgba(0, 224, 255, 0.04)')
+      .polygonStrokeColor(() => 'rgba(0, 255, 136, 0.35)')
       .polygonAltitude(0.008)
-      .polygonLabel((d: any) => `<span style="font-family:monospace;font-size:9px;color:#00E0FF;">${d?.properties?.name || ''}</span>`)
-      // Arcs for Shipping Corridors
+      .polygonLabel((d: any) => `<span style="font-family:monospace;font-size:9px;color:#00FF88;">${d?.properties?.name || ''}</span>`)
+      // Arcs for Shipping Corridors + Exchange→HQ Supply Chain Arcs
       .arcLabel(d => (d as any).name)
       .arcColor('color')
       .arcDashLength(0.4)
@@ -65,8 +64,8 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
       .hexBinPointWeight(d => (d as StockNode).marketCap / 1e11)
       .hexBinResolution(4)
       .hexMargin(0.1)
-      .hexTopColor(() => '#00E0FF')
-      .hexSideColor(() => '#00E0FF22')
+      .hexTopColor(() => '#00FF88')
+      .hexSideColor(() => '#00FF8822')
       .hexLabel(d => {
         const points = (d as any).points as StockNode[];
         const sectorCount: Record<string, number> = {};
@@ -75,29 +74,29 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
         });
         const topSector = Object.entries(sectorCount).sort((a,b) => b[1] - a[1])[0]?.[0];
         return `
-          <div style="background: rgba(0,0,0,0.8); padding: 8px; border: 1px solid #00E0FF; font-size: 9px; font-family: 'JetBrains Mono';">
-            <div style="color: #00E0FF; font-weight: 900; margin-bottom: 4px;">SECTOR_CLUSTER: ${topSector || 'MIXED'}</div>
+          <div style="background: rgba(0,0,0,0.9); padding: 8px; border: 1px solid #00FF88; font-size: 9px; font-family: 'JetBrains Mono';">
+            <div style="color: #00FF88; font-weight: 900; margin-bottom: 4px;">SECTOR_CLUSTER: ${topSector || 'MIXED'}</div>
             <div style="opacity: 0.6;">CONVERGENCE_NODES: ${points.length}</div>
             <div style="opacity: 0.6;">TICKERS: ${points.map(p => p.ticker).join(', ')}</div>
           </div>
         `;
       })
-      // Points
+      // Points with volumetric glow effect
       .pointLat('lat')
       .pointLng('lon')
       .pointColor(d => {
         const stock = d as StockNode;
         if (colorMode === 'change') {
-           return stock.change1d > 0 ? '#00FF41' : stock.change1d < 0 ? '#FF3131' : '#8E9299';
+           return stock.change1d > 0 ? '#00FF66' : stock.change1d < 0 ? '#FF3844' : '#6B7280';
         } else {
            const beta = stock.trumpBeta || 0;
-           return beta > 7 ? '#D4AF37' : '#00E0FF';
+           return beta > 7 ? '#FFD700' : '#00FF88';
         }
       })
       .pointAltitude(0.02)
       .pointRadius(d => {
         const stock = d as StockNode;
-        return Math.max(0.2, Math.log10(stock.marketCap / 1e8) * 0.4);
+        return Math.max(0.25, Math.log10(stock.marketCap / 1e8) * 0.5);
       })
       .pointLabel(d => {
         const stock = d as StockNode;
@@ -143,12 +142,12 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
       .ringRepeatPeriod(1000)
       .onPointClick((d: any) => onSelectStock(d as StockNode));
 
-    // Dark ocean base for the globe sphere (replaces the raster earth texture).
+    // Night-mode ocean with subtle city-lights glow
     try {
       const mat = g.globeMaterial();
-      mat.color?.set?.('#061018');
-      if ('emissive' in mat) mat.emissive?.set?.('#020409');
-      if ('shininess' in mat) mat.shininess = 6;
+      mat.color?.set?.('#0a0e14');
+      if ('emissive' in mat) mat.emissive?.set?.('#001a2e');
+      if ('shininess' in mat) mat.shininess = 3;
     } catch { /* material not ready — non-fatal */ }
 
     g.controls().autoRotate = true;
