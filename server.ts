@@ -152,6 +152,129 @@ class ScreenStore {
   }
 }
 
+// ─── WATCHLIST STORE (durable Redis + in-mem mirror) ──────────────────────────
+// A "company node" placed on the globe. Resolved from a Yahoo quote plus an
+// approximate HQ/exchange location so it can be rendered spatially.
+interface WatchlistNode {
+  ticker: string;
+  name: string;
+  exchange: string;
+  sector: string;
+  lat: number;
+  lon: number;
+  price: number;
+  change1d: number;
+  marketCap: number;
+  addedAt: string;
+  lastUpdated: string;
+}
+
+// Approximate coordinates for the city of each exchange. Yahoo returns short
+// exchange codes; we place a node at its exchange's location (with a small
+// deterministic jitter so co-listed names don't overlap exactly).
+const EXCHANGE_COORDS: Record<string, [number, number]> = {
+  NMS: [40.71, -74.0], NGM: [40.71, -74.0], NCM: [40.71, -74.0], NASDAQ: [40.71, -74.0],
+  NYQ: [40.71, -74.0], NYS: [40.71, -74.0], PCX: [40.71, -74.0], ASE: [40.71, -74.0],
+  MCE: [40.42, -3.70],                                   // Madrid
+  AMS: [52.37, 4.90],                                    // Amsterdam
+  GER: [50.11, 8.68], FRA: [50.11, 8.68], XETRA: [50.11, 8.68], // Frankfurt
+  LSE: [51.51, -0.13], LON: [51.51, -0.13],              // London
+  PAR: [48.85, 2.35],                                    // Paris
+  MIL: [45.46, 9.19],                                    // Milan
+  EBS: [47.37, 8.54], SWX: [47.37, 8.54], VTX: [47.37, 8.54], // Zurich
+  TOR: [43.65, -79.38],                                  // Toronto
+  HKG: [22.32, 114.17],                                  // Hong Kong
+  TYO: [35.68, 139.69], JPX: [35.68, 139.69],            // Tokyo
+  SHH: [31.23, 121.47], SHZ: [22.54, 114.06],            // Shanghai / Shenzhen
+  NSI: [19.08, 72.88], BSE: [19.08, 72.88],              // Mumbai
+  ASX: [-33.87, 151.21],                                 // Sydney
+  STO: [59.33, 18.06],                                   // Stockholm
+  SAO: [-23.55, -46.63],                                 // Sao Paulo
+  KSC: [37.57, 126.98],                                  // Seoul
+  TAI: [25.03, 121.57],                                  // Taipei
+};
+
+// Yahoo ticker suffixes → exchange city, so an international ticker still gets
+// placed even when no live quote (and thus no exchange code) is available.
+const SUFFIX_COORDS: Record<string, [number, number]> = {
+  AS: [52.37, 4.90], MC: [40.42, -3.70], SW: [47.37, 8.54], VX: [47.37, 8.54],
+  L: [51.51, -0.13], DE: [50.11, 8.68], F: [50.11, 8.68], PA: [48.85, 2.35],
+  MI: [45.46, 9.19], TO: [43.65, -79.38], HK: [22.32, 114.17], T: [35.68, 139.69],
+  SS: [31.23, 121.47], SZ: [22.54, 114.06], NS: [19.08, 72.88], BO: [19.08, 72.88],
+  AX: [-33.87, 151.21], ST: [59.33, 18.06], SA: [-23.55, -46.63], KS: [37.57, 126.98],
+  TW: [25.03, 121.57],
+};
+
+function resolveCoords(ticker: string, exchange?: string): [number, number] {
+  const suffix = ticker.includes('.') ? ticker.split('.').pop()! : '';
+  const base =
+    (exchange && EXCHANGE_COORDS[exchange]) ||
+    (suffix && SUFFIX_COORDS[suffix]) ||
+    [20, 0]; // mid-Atlantic default (US-listed names with no suffix land here)
+  // Deterministic jitter (±~1.2°) from the ticker so co-listed names separate.
+  let h = 0;
+  for (const c of ticker) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const jLat = ((h % 240) / 100) - 1.2;
+  const jLon = (((h >> 8) % 240) / 100) - 1.2;
+  return [base[0] + jLat, base[1] + jLon];
+}
+
+class WatchlistStore {
+  private mem = new Map<string, WatchlistNode>();
+  private readonly SET_KEY = 'watchlist:tickers';
+  private readonly KEY_PREFIX = 'watchlist:node:';
+  private hydrated = false;
+
+  constructor(private redisClient: any) {}
+
+  private key(t: string): string { return `${this.KEY_PREFIX}${t}`; }
+
+  private async hydrate(): Promise<void> {
+    if (this.hydrated) return;
+    try {
+      const tickers: string[] = await this.redisClient.sMembers(this.SET_KEY);
+      for (const t of tickers) {
+        const raw = await this.redisClient.get(this.key(t));
+        if (raw) this.mem.set(t, JSON.parse(raw));
+      }
+    } catch (err) {
+      console.warn('[WATCHLIST] Redis hydrate error:', err);
+    }
+    this.hydrated = true;
+  }
+
+  async save(node: WatchlistNode): Promise<void> {
+    this.mem.set(node.ticker, node);
+    try {
+      await this.redisClient.sAdd(this.SET_KEY, node.ticker);
+      await this.redisClient.set(this.key(node.ticker), JSON.stringify(node));
+    } catch (err) {
+      console.warn('[WATCHLIST] Redis write error (kept in memory):', err);
+    }
+  }
+
+  async remove(ticker: string): Promise<boolean> {
+    const existed = this.mem.delete(ticker);
+    try {
+      await this.redisClient.sRem(this.SET_KEY, ticker);
+      await this.redisClient.del(this.key(ticker));
+    } catch (err) {
+      console.warn('[WATCHLIST] Redis delete error:', err);
+    }
+    return existed;
+  }
+
+  async list(): Promise<WatchlistNode[]> {
+    await this.hydrate();
+    return Array.from(this.mem.values()).sort((a, b) => a.addedAt.localeCompare(b.addedAt));
+  }
+
+  async has(ticker: string): Promise<boolean> {
+    await this.hydrate();
+    return this.mem.has(ticker);
+  }
+}
+
 // ─── WEBSOCKET CLIENT REGISTRY ────────────────────────────────────────────────
 class ClientRegistry {
   private clients = new Map<string, ConnectedClient>();
@@ -221,9 +344,10 @@ async function startServer() {
     console.error('[REDIS] Connection failed. Running without Redis cache/pubsub.', err);
   }
 
-  const cache    = new MarketDataCache(redisCache);
-  const screens  = new ScreenStore(redisCache);
-  const registry = new ClientRegistry();
+  const cache     = new MarketDataCache(redisCache);
+  const screens   = new ScreenStore(redisCache);
+  const watchlist = new WatchlistStore(redisCache);
+  const registry  = new ClientRegistry();
 
   // ── WebSocket Server ──
   const wss = new WebSocketServer({ server: httpServer });
@@ -264,7 +388,7 @@ async function startServer() {
   });
 
   // ── Redis Subscriptions ──
-  const CHANNELS = ['raven:geo', 'raven:equity', 'raven:agent', 'raven:screen'];
+  const CHANNELS = ['raven:geo', 'raven:equity', 'raven:agent', 'raven:screen', 'raven:watchlist'];
   if (redisSub.isOpen) {
     await redisSub.subscribe(CHANNELS, (message, channel) => {
       try {
@@ -406,6 +530,72 @@ async function startServer() {
     const report = await screens.getReport(req.params.id);
     if (!report) return res.status(404).json({ error: 'REPORT_NOT_FOUND' });
     res.json(report);
+  });
+
+  // ── Watchlist Routes ──
+  const broadcastWatchlist = async (payload: object) => {
+    try {
+      await redisCache.publish('raven:watchlist', JSON.stringify(payload));
+    } catch {
+      registry.broadcast(payload, 'raven:watchlist');
+    }
+  };
+
+  // List all watchlist nodes (for globe hydration on load).
+  app.get('/api/watchlist', async (_req, res) => {
+    res.json(await watchlist.list());
+  });
+
+  // Add a company by ticker: resolve it via Yahoo, place it on the globe,
+  // persist it, and broadcast the new node to connected clients.
+  app.post('/api/watchlist', async (req, res) => {
+    const raw = (typeof req.body === 'string' ? req.body : req.body?.ticker) || '';
+    const ticker = String(raw).trim().toUpperCase();
+    if (!ticker) return res.status(400).json({ error: 'EMPTY_TICKER' });
+
+    if (await watchlist.has(ticker)) {
+      return res.status(409).json({ error: 'ALREADY_WATCHED', ticker });
+    }
+
+    // Best-effort live quote. Placement on the globe must not depend on it —
+    // if the quote provider is unavailable the company is still added with
+    // price/change left at 0 until a later batch sync fills them in.
+    let quote: any = null;
+    try {
+      const q: any = await (yahooFinance as any).quote(ticker);
+      quote = Array.isArray(q) ? q[0] : q;
+    } catch (e: any) {
+      console.warn(`[WATCHLIST] Quote resolve failed for ${ticker} (adding without quote):`, e.message);
+    }
+
+    const exchange = quote?.exchange || quote?.fullExchangeName || 'UNRESOLVED';
+    const [lat, lon] = resolveCoords(ticker, quote?.exchange);
+    const node = {
+      ticker,
+      name: quote?.longName || quote?.shortName || ticker,
+      exchange,
+      sector: quote?.sector || quote?.quoteType || 'Equity',
+      lat,
+      lon,
+      price: quote?.regularMarketPrice ?? 0,
+      change1d: quote?.regularMarketChangePercent ?? 0,
+      marketCap: quote?.marketCap ?? 1e9,
+      addedAt: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+    };
+
+    await watchlist.save(node);
+    await broadcastWatchlist({ type: 'WATCHLIST_ADD', payload: node });
+    return res.status(201).json(node);
+  });
+
+  // Remove a company from the watchlist.
+  app.delete('/api/watchlist/:ticker', async (req, res) => {
+    const ticker = req.params.ticker.trim().toUpperCase();
+    const existed = await watchlist.remove(ticker);
+    if (!existed) return res.status(404).json({ error: 'NOT_WATCHED', ticker });
+    await broadcastWatchlist({ type: 'WATCHLIST_REMOVE', payload: { ticker } });
+    res.json({ ok: true, ticker });
   });
 
   // Vite middleware

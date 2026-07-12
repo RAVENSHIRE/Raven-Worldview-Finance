@@ -132,6 +132,22 @@ export type FilterVersion = {
   createdAt: string;
 };
 
+// A user-added company placed on the globe. Resolved server-side from a live
+// quote + an approximate exchange location.
+export type WatchlistNode = {
+  ticker: string;
+  name: string;
+  exchange: string;
+  sector: string;
+  lat: number;
+  lon: number;
+  price: number;
+  change1d: number;
+  marketCap: number;
+  addedAt: string;
+  lastUpdated: string;
+};
+
 export const MOCK_STOCKS: StockNode[] = [
   {
     ticker: "PLTR",

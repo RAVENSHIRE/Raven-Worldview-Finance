@@ -1,5 +1,5 @@
 import { useMemo, useEffect, useCallback } from 'react';
-import { MOCK_STOCKS } from './types';
+import { MOCK_STOCKS, StockNode, WatchlistNode } from './types';
 import PreMoverScorecard from './components/hud/PreMoverScorecard';
 import GlobeView from './canvas/GlobeView';
 import FlatView from './canvas/FlatView';
@@ -8,6 +8,7 @@ import LiveFeedSidebar from './components/hud/LiveFeedSidebar';
 import AIChat from './components/hud/AIChat';
 import Mirofish from './components/hud/Mirofish';
 import DeepDive from './components/hud/DeepDive';
+import WatchlistPanel from './components/hud/WatchlistPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -26,6 +27,28 @@ import {
 import { useMarketState } from './store/useMarketState';
 import { useSpatialState } from './store/useSpatialState';
 import { useScreenState } from './store/useScreenState';
+import { useWatchlistState } from './store/useWatchlistState';
+
+// Watchlist nodes carry fewer fields than a full StockNode; fill spatial-render
+// defaults so they can flow through the same globe/monitor pipeline.
+const watchlistAsStock = (n: WatchlistNode): StockNode => ({
+  ticker: n.ticker,
+  name: n.name,
+  country: '',
+  iso_code: '',
+  lat: n.lat,
+  lon: n.lon,
+  exchange: n.exchange,
+  sector: n.sector,
+  themes: [],
+  marketCap: n.marketCap,
+  price: n.price,
+  change1d: n.change1d,
+  change5d: 0,
+  volume: 0,
+  avg30dVolume: 1,
+  lastUpdated: n.lastUpdated,
+});
 
 export default function App() {
   // Decentralized State via Zustand
@@ -47,12 +70,21 @@ export default function App() {
   } = useSpatialState();
 
   const { addReport, setReports, setActiveReport } = useScreenState();
+  const { nodes: watchlistNodes, setNodes: setWatchlistNodes, addNode: addWatchlistNode, removeNode: removeWatchlistNode } = useWatchlistState();
+
+  // Base universe = mock universe + user watchlist companies (deduped).
+  const baseNodes = useMemo(() => {
+    const extra = watchlistNodes
+      .filter(w => !MOCK_STOCKS.some(m => m.ticker === w.ticker))
+      .map(watchlistAsStock);
+    return [...MOCK_STOCKS, ...extra];
+  }, [watchlistNodes]);
 
   const fetchBatch = useCallback(async () => {
     setIsRefreshing(true);
     setSyncError(null);
     
-    const symbolList = MOCK_STOCKS
+    const symbolList = baseNodes
       .filter(s => s.exchange && !s.exchange.includes('PRIVATE'))
       .map(s => encodeURIComponent(s.ticker));
 
@@ -81,7 +113,7 @@ export default function App() {
     } finally {
       setTimeout(() => setIsRefreshing(false), 800);
     }
-  }, [setIsRefreshing, setSyncError, setLiveQuotes]);
+  }, [baseNodes, setIsRefreshing, setSyncError, setLiveQuotes]);
 
   // WebSocket Ingest
   useEffect(() => {
@@ -105,6 +137,10 @@ export default function App() {
             addSwarmMessage(event);
         } else if (event.type === 'SCREEN_REPORT') {
             addReport(event.payload);
+        } else if (event.type === 'WATCHLIST_ADD') {
+            addWatchlistNode(event.payload);
+        } else if (event.type === 'WATCHLIST_REMOVE') {
+            removeWatchlistNode(event.payload.ticker);
         } else {
             addEvent(event);
         }
@@ -114,7 +150,7 @@ export default function App() {
     };
 
     return () => ws.close();
-  }, [addEvent, addSwarmMessage, addReport]);
+  }, [addEvent, addSwarmMessage, addReport, addWatchlistNode, removeWatchlistNode]);
 
   // Initial hydration of screening reports (index + latest full blob).
   useEffect(() => {
@@ -126,12 +162,15 @@ export default function App() {
 
         const latestRes = await fetch(new URL('/api/screen/report/latest', window.location.origin).toString());
         if (latestRes.ok && !cancelled) setActiveReport(await latestRes.json());
+
+        const wlRes = await fetch(new URL('/api/watchlist', window.location.origin).toString());
+        if (wlRes.ok && !cancelled) setWatchlistNodes(await wlRes.json());
       } catch (e) {
-        console.error('SCREEN_HYDRATION_ERROR', e);
+        console.error('HYDRATION_ERROR', e);
       }
     })();
     return () => { cancelled = true; };
-  }, [setReports, setActiveReport]);
+  }, [setReports, setActiveReport, setWatchlistNodes]);
 
   // Periodic Sync
   useEffect(() => {
@@ -141,7 +180,7 @@ export default function App() {
   }, [fetchBatch]);
 
   const processedStocks = useMemo(() => {
-    return MOCK_STOCKS.map(s => {
+    return baseNodes.map(s => {
       const volumeSurge = s.volume / s.avg30dVolume;
       const quote = liveQuotes[s.ticker];
       
@@ -159,7 +198,7 @@ export default function App() {
         volumeSurge: quote ? Number(quote.volume) / s.avg30dVolume : volumeSurge,
       };
     });
-  }, [liveQuotes]);
+  }, [liveQuotes, baseNodes]);
 
   const filteredStocks = useMemo(() => {
     return processedStocks.filter(stock => {
@@ -255,13 +294,19 @@ export default function App() {
           </div>
         )}
         <div className="flex-1 overflow-hidden flex flex-col gap-4">
-            <div className="flex-[0.6] min-h-[220px]">
+            <div className="flex-[0.5] min-h-[180px]">
                 <ErrorBoundary label="SCORECARD">
                   <PreMoverScorecard stocks={processedStocks} />
                 </ErrorBoundary>
             </div>
 
-            <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex-[0.6] min-h-0 overflow-hidden flex flex-col border-t border-terminal-line/50 pt-4">
+                <ErrorBoundary label="WATCHLIST">
+                  <WatchlistPanel onSelect={(n) => setSelectedStock(watchlistAsStock(n))} />
+                </ErrorBoundary>
+            </div>
+
+            <div className="flex-[0.5] overflow-hidden flex flex-col border-t border-terminal-line/50 pt-4">
               <div className="flex items-center gap-2 mb-3">
                 <Layers size={12} className="text-terminal-cyan" />
                 <span className="text-[10px] font-black uppercase tracking-widest text-white">Operational Layers</span>
