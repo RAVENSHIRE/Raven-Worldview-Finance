@@ -2,26 +2,33 @@ import { useState, useEffect } from 'react';
 import { StockNode, BacktestResult } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
-import { 
-    LineChart, 
-    History, 
-    Newspaper, 
-    Share2, 
-    Play, 
-    AlertTriangle, 
+import {
+    LineChart,
+    History,
+    Newspaper,
+    Share2,
+    Play,
+    AlertTriangle,
     Zap,
     Target,
     ShieldCheck,
     Cpu,
-    ArrowRight
+    ArrowRight,
+    ClipboardList
 } from 'lucide-react';
+import { useScreenState } from '../../store/useScreenState';
 
 interface MirofishProps {
   selectedStock?: StockNode | null;
 }
 
+type MirofishTab = 'screen' | 'news' | 'strategy';
+
 export default function Mirofish({ selectedStock }: MirofishProps) {
-  const [activeTab, setActiveTab] = useState<'news' | 'strategy'>('news');
+  const { reports, activeReport, setActiveReport } = useScreenState();
+  // Default to the screening report reader when idle; when a stock is
+  // selected the operator is more likely looking at news/strategy.
+  const [activeTab, setActiveTab] = useState<MirofishTab>('screen');
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -46,6 +53,17 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
     setTimeout(() => setIsExecuting(false), 2000);
   };
 
+  const loadReport = async (id: string) => {
+    if (activeReport?.id === id) return;
+    try {
+      const url = new URL(`/api/screen/report/${id}`, window.location.origin);
+      const res = await fetch(url.toString());
+      if (res.ok) setActiveReport(await res.json());
+    } catch (e) {
+      console.error('SCREEN_REPORT_FETCH_ERROR', e);
+    }
+  };
+
   useEffect(() => {
     if (selectedStock && activeTab === 'strategy') {
         runBacktest();
@@ -61,7 +79,17 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
   return (
     <div className="flex flex-col h-full bg-terminal-panel/30 border border-terminal-line rounded-sm overflow-hidden font-mono shadow-[0_0_50px_rgba(0,0,0,0.5)]">
       <div className="flex border-b border-terminal-line bg-black/40 backdrop-blur-md">
-        <button 
+        <button
+          onClick={() => setActiveTab('screen')}
+          className={cn(
+            "flex-1 p-2.5 text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 relative overflow-hidden",
+            activeTab === 'screen' ? "text-terminal-green" : "text-zinc-600 hover:text-zinc-400"
+          )}
+        >
+          {activeTab === 'screen' && <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-0.5 bg-terminal-green" />}
+          <ClipboardList size={12} /> Screen_Report
+        </button>
+        <button
           onClick={() => setActiveTab('news')}
           className={cn(
             "flex-1 p-2.5 text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 relative overflow-hidden",
@@ -85,8 +113,63 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
 
       <div className="flex-1 overflow-y-auto no-scrollbar relative p-4 bg-gradient-to-b from-transparent to-black/20">
         <AnimatePresence mode="wait">
-          {activeTab === 'news' ? (
-            <motion.div 
+          {activeTab === 'screen' ? (
+            <motion.div
+              key="screen"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="h-full flex flex-col gap-3"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-[8px] font-black text-zinc-700 uppercase tracking-[0.2em]">Screening_Report_Feed</h3>
+                <span className="text-[7px] text-zinc-600 uppercase tracking-widest">{reports.length} RUN{reports.length === 1 ? '' : 'S'}</span>
+              </div>
+
+              {reports.length > 0 && (
+                <div className="flex flex-col gap-1 max-h-24 overflow-y-auto no-scrollbar border border-terminal-line/50 rounded-sm p-1 bg-black/30">
+                  {reports.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => loadReport(r.id)}
+                      className={cn(
+                        "text-left px-2 py-1 rounded-sm transition-colors group",
+                        activeReport?.id === r.id ? "bg-terminal-green/10 border border-terminal-green/30" : "hover:bg-white/[0.03] border border-transparent"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[8px] font-black uppercase truncate text-white/80 group-hover:text-white">
+                          {r.source || 'EXTERNAL_WORKFLOW'}
+                        </span>
+                        <span className="text-[7px] text-zinc-600 shrink-0">
+                          {new Date(r.capturedAt).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <p className="text-[8px] text-zinc-500 truncate group-hover:text-zinc-400">{r.preview}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar border border-terminal-line rounded-sm bg-black/40">
+                {activeReport ? (
+                  <pre className="text-[9px] leading-relaxed text-terminal-green/90 whitespace-pre-wrap break-words p-3 font-mono">
+                    {activeReport.text}
+                  </pre>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center opacity-30 px-6 space-y-3 py-8">
+                    <div className="p-4 rounded-full border border-dashed border-terminal-line">
+                      <ClipboardList size={22} className="text-zinc-600" />
+                    </div>
+                    <p className="text-[9px] uppercase font-black tracking-widest leading-relaxed">
+                      No screening report ingested. <br/> Awaiting external workflow blob...
+                    </p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          ) : activeTab === 'news' ? (
+            <motion.div
               key="news"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}

@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useMarketState } from './store/useMarketState';
 import { useSpatialState } from './store/useSpatialState';
+import { useScreenState } from './store/useScreenState';
 
 export default function App() {
   // Decentralized State via Zustand
@@ -43,6 +44,8 @@ export default function App() {
     searchQuery, setSearchQuery,
     showSignals, setShowSignals
   } = useSpatialState();
+
+  const { addReport, setReports, setActiveReport } = useScreenState();
 
   const fetchBatch = useCallback(async () => {
     setIsRefreshing(true);
@@ -99,6 +102,8 @@ export default function App() {
         const event = JSON.parse(message.data);
         if (event.type === 'AGENT_TALK') {
             addSwarmMessage(event);
+        } else if (event.type === 'SCREEN_REPORT') {
+            addReport(event.payload);
         } else {
             addEvent(event);
         }
@@ -108,7 +113,24 @@ export default function App() {
     };
 
     return () => ws.close();
-  }, [addEvent, addSwarmMessage]);
+  }, [addEvent, addSwarmMessage, addReport]);
+
+  // Initial hydration of screening reports (index + latest full blob).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const listRes = await fetch(new URL('/api/screen/reports?limit=20', window.location.origin).toString());
+        if (listRes.ok && !cancelled) setReports(await listRes.json());
+
+        const latestRes = await fetch(new URL('/api/screen/report/latest', window.location.origin).toString());
+        if (latestRes.ok && !cancelled) setActiveReport(await latestRes.json());
+      } catch (e) {
+        console.error('SCREEN_HYDRATION_ERROR', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [setReports, setActiveReport]);
 
   // Periodic Sync
   useEffect(() => {

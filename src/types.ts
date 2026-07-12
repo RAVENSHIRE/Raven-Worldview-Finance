@@ -83,6 +83,55 @@ export type SatelliteNode = {
   orbitType: string;
 };
 
+// ─── SCREENING WORKFLOW ───────────────────────────────────────────────────────
+// The screening report is treated as plain text first. Structured fields
+// (runs, outcomes, filter versions) layer on top incrementally.
+
+export type ScreenReport = {
+  id: string;
+  text: string;                 // raw plain-text screening blob
+  source?: string;              // e.g. external workflow name
+  filterVersionId?: string;     // filter version that produced this report
+  capturedAt: string;           // ISO timestamp
+};
+
+// Lightweight index entry for listing reports without shipping full blobs.
+export type ScreenReportMeta = {
+  id: string;
+  source?: string;
+  filterVersionId?: string;
+  capturedAt: string;
+  preview: string;              // first line / truncated head of the blob
+};
+
+// A stored snapshot of a screen run (winners/losers parsed from a report).
+export type ScreenRun = {
+  id: string;
+  reportId?: string;
+  filterVersionId?: string;
+  winners: string[];            // tickers
+  losers: string[];             // tickers
+  capturedAt: string;
+};
+
+// Next-day comparison of a run against realized outcomes.
+export type ScreenOutcome = {
+  runId: string;
+  hits: string[];               // screened tickers that moved as expected
+  misses: string[];             // screened tickers that did not
+  scoredAt: string;
+};
+
+// Append-only filter definition. New versions never delete prior ones;
+// `supersedes` links back to the version this one replaces.
+export type FilterVersion = {
+  id: string;
+  name: string;
+  criteria: string;             // plain-text or JSON string of the filter rules
+  supersedes?: string;
+  createdAt: string;
+};
+
 export const MOCK_STOCKS: StockNode[] = [
   {
     ticker: "PLTR",

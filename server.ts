@@ -74,6 +74,77 @@ class MarketDataCache {
   }
 }
 
+// ─── SCREEN STORE (durable: Redis no-TTL + in-mem mirror) ─────────────────────
+// Persists screening reports under a `screen:*` namespace. Unlike the market
+// cache these keys have no TTL. The in-memory Map mirrors Redis so the app keeps
+// working (for the session lifetime) if Redis is unavailable.
+interface StoredReport {
+  id: string;
+  text: string;
+  source?: string;
+  filterVersionId?: string;
+  capturedAt: string;
+}
+
+class ScreenStore {
+  private mem = new Map<string, StoredReport>();
+  private index: string[] = []; // report ids, newest first
+  private readonly INDEX_KEY = 'screen:reports';
+  private readonly KEY_PREFIX = 'screen:report:';
+
+  constructor(private redisClient: any) {}
+
+  private key(id: string): string { return `${this.KEY_PREFIX}${id}`; }
+
+  async saveReport(report: StoredReport): Promise<void> {
+    this.mem.set(report.id, report);
+    this.index.unshift(report.id);
+    try {
+      await this.redisClient.set(this.key(report.id), JSON.stringify(report));
+      await this.redisClient.lPush(this.INDEX_KEY, report.id);
+    } catch (err) {
+      console.warn('[SCREEN] Redis write error (kept in memory):', err);
+    }
+  }
+
+  async getReport(id: string): Promise<StoredReport | null> {
+    const local = this.mem.get(id);
+    if (local) return local;
+    try {
+      const raw = await this.redisClient.get(this.key(id));
+      if (raw) {
+        const report = JSON.parse(raw) as StoredReport;
+        this.mem.set(id, report);
+        return report;
+      }
+    } catch (err) {
+      console.warn('[SCREEN] Redis read error:', err);
+    }
+    return null;
+  }
+
+  private async listIds(limit: number): Promise<string[]> {
+    try {
+      const ids = await this.redisClient.lRange(this.INDEX_KEY, 0, limit - 1);
+      if (Array.isArray(ids) && ids.length) return ids;
+    } catch (err) {
+      console.warn('[SCREEN] Redis index read error:', err);
+    }
+    return this.index.slice(0, limit);
+  }
+
+  async listReports(limit = 20): Promise<StoredReport[]> {
+    const ids = await this.listIds(limit);
+    const reports = await Promise.all(ids.map(id => this.getReport(id)));
+    return reports.filter((r): r is StoredReport => r !== null);
+  }
+
+  async latestReport(): Promise<StoredReport | null> {
+    const [id] = await this.listIds(1);
+    return id ? this.getReport(id) : null;
+  }
+}
+
 // ─── WEBSOCKET CLIENT REGISTRY ────────────────────────────────────────────────
 class ClientRegistry {
   private clients = new Map<string, ConnectedClient>();
@@ -125,6 +196,10 @@ async function startServer() {
   const httpServer = createServer(app);
   const PORT = parseInt(process.env.PORT || '3000', 10);
 
+  // Body parsers: screening reports arrive as raw text/plain or JSON.
+  app.use(express.json({ limit: '2mb' }));
+  app.use(express.text({ type: 'text/plain', limit: '2mb' }));
+
   // ── Redis Setup ──
   const redisCache = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
   const redisSub   = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
@@ -140,6 +215,7 @@ async function startServer() {
   }
 
   const cache    = new MarketDataCache(redisCache);
+  const screens  = new ScreenStore(redisCache);
   const registry = new ClientRegistry();
 
   // ── WebSocket Server ──
@@ -181,7 +257,7 @@ async function startServer() {
   });
 
   // ── Redis Subscriptions ──
-  const CHANNELS = ['raven:geo', 'raven:equity', 'raven:agent'];
+  const CHANNELS = ['raven:geo', 'raven:equity', 'raven:agent', 'raven:screen'];
   if (redisSub.isOpen) {
     await redisSub.subscribe(CHANNELS, (message, channel) => {
       try {
@@ -257,6 +333,72 @@ async function startServer() {
     } catch (e: any) {
       res.status(500).json({ error: 'FETCH_ERROR', details: e.message });
     }
+  });
+
+  // ── Screening Report Routes ──
+  const previewOf = (text: string): string =>
+    (text.split('\n').find(l => l.trim().length > 0) || '').slice(0, 120);
+
+  // Ingest a plain-text screening report blob from an external workflow.
+  // Accepts raw text/plain or JSON { text, source?, filterVersionId?, capturedAt? }.
+  app.post('/api/screen/report', async (req, res) => {
+    const body: any = req.body;
+    const text: string = typeof body === 'string' ? body : (body?.text ?? '');
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'EMPTY_REPORT' });
+    }
+
+    const report = {
+      id: crypto.randomUUID(),
+      text,
+      source: typeof body === 'object' ? body.source : undefined,
+      filterVersionId: typeof body === 'object' ? body.filterVersionId : undefined,
+      capturedAt: (typeof body === 'object' && body.capturedAt) || new Date().toISOString(),
+    };
+
+    await screens.saveReport(report);
+
+    // Push to connected clients over the existing pub/sub → WS bridge.
+    const meta = { ...report, preview: previewOf(report.text) };
+    try {
+      await redisCache.publish('raven:screen', JSON.stringify({
+        type: 'SCREEN_REPORT',
+        payload: meta,
+      }));
+    } catch {
+      // Redis pub/sub unavailable — fall back to direct broadcast.
+      registry.broadcast({ type: 'SCREEN_REPORT', payload: meta }, 'raven:screen');
+    }
+
+    res.status(201).json({ id: report.id });
+  });
+
+  // Index of recent reports (metadata + preview, no full blobs).
+  app.get('/api/screen/reports', async (req, res) => {
+    const limit = Math.min(parseInt((req.query.limit as string) || '20', 10) || 20, 100);
+    const reports = await screens.listReports(limit);
+    res.json(reports.map(r => ({
+      id: r.id,
+      source: r.source,
+      filterVersionId: r.filterVersionId,
+      capturedAt: r.capturedAt,
+      preview: previewOf(r.text),
+    })));
+  });
+
+  // Most recent full report.
+  app.get('/api/screen/report/latest', async (_req, res) => {
+    const report = await screens.latestReport();
+    if (!report) return res.status(404).json({ error: 'NO_REPORTS' });
+    res.json(report);
+  });
+
+  // Full report by id.
+  app.get('/api/screen/report/:id', async (req, res) => {
+    const report = await screens.getReport(req.params.id);
+    if (!report) return res.status(404).json({ error: 'REPORT_NOT_FOUND' });
+    res.json(report);
   });
 
   // Vite middleware
