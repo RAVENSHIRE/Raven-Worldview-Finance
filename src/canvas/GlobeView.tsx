@@ -1,6 +1,17 @@
 import { useEffect, useRef } from 'react';
 import Globe from 'globe.gl';
+import * as topojson from 'topojson-client';
+import countries110m from 'world-atlas/countries-110m.json';
 import { StockNode, FinanceEvent } from '../types';
+
+// Convert the bundled TopoJSON world into GeoJSON country features once at
+// module load. This makes the globe fully self-contained — no external CDN
+// textures — so it renders reliably in any environment.
+const WORLD = topojson.feature(
+  countries110m as any,
+  (countries110m as any).objects.countries
+) as any;
+const COUNTRY_FEATURES = WORLD.features as any[];
 
 interface GlobeViewportProps {
   stocks: StockNode[];
@@ -26,11 +37,20 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
     if (!containerRef.current) return;
 
     const g = (Globe as any)()(containerRef.current)
-      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg')
-      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
-      .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
+      // Self-contained surface: no CDN textures. Dark ocean sphere + glowing
+      // country polygons rendered from bundled world-atlas geometry.
+      .backgroundColor('#02020a')
+      .showGlobe(true)
+      .showAtmosphere(true)
       .atmosphereColor('#00E0FF')
-      .atmosphereAltitude(0.15)
+      .atmosphereAltitude(0.18)
+      // Country landmasses
+      .polygonsData(COUNTRY_FEATURES)
+      .polygonCapColor(() => 'rgba(9, 20, 30, 0.85)')
+      .polygonSideColor(() => 'rgba(0, 224, 255, 0.06)')
+      .polygonStrokeColor(() => 'rgba(0, 224, 255, 0.55)')
+      .polygonAltitude(0.008)
+      .polygonLabel((d: any) => `<span style="font-family:monospace;font-size:9px;color:#00E0FF;">${d?.properties?.name || ''}</span>`)
       // Arcs for Shipping Corridors
       .arcLabel(d => (d as any).name)
       .arcColor('color')
@@ -123,8 +143,16 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
       .ringRepeatPeriod(1000)
       .onPointClick((d: any) => onSelectStock(d as StockNode));
 
+    // Dark ocean base for the globe sphere (replaces the raster earth texture).
+    try {
+      const mat = g.globeMaterial();
+      mat.color?.set?.('#061018');
+      if ('emissive' in mat) mat.emissive?.set?.('#020409');
+      if ('shininess' in mat) mat.shininess = 6;
+    } catch { /* material not ready — non-fatal */ }
+
     g.controls().autoRotate = true;
-    g.controls().autoRotateSpeed = 0.2;
+    g.controls().autoRotateSpeed = 0.35;
 
     globeInstance.current = g;
 
