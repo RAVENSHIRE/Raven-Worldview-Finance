@@ -331,18 +331,40 @@ async function startServer() {
   app.use(express.text({ type: 'text/plain', limit: '2mb' }));
 
   // ── Redis Setup ──
-  const redisCache = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
-  const redisSub   = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+  // Boot never blocks on Redis. The clients retry forever in the background
+  // with capped backoff, so Redis started AFTER the app is picked up
+  // automatically; until then the stores fall back to their in-memory mirrors.
+  const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
+  const redisSocket = {
+    connectTimeout: 3000,
+    reconnectStrategy: (retries: number) => Math.min(200 * 2 ** retries, 5000),
+  };
+  const redisCache = createClient({ url: REDIS_URL, socket: redisSocket });
+  const redisSub   = createClient({ url: REDIS_URL, socket: redisSocket });
 
-  redisCache.on('error', err => console.error('[REDIS:CACHE] Error:', err));
-  redisSub.on('error',   err => console.error('[REDIS:SUB] Error:',   err));
+  // Log the first few connection errors, then go quiet (the background retry
+  // loop would otherwise spam one line every few seconds).
+  const errLogger = (label: string) => {
+    let count = 0;
+    return (err: any) => {
+      count++;
+      if (count <= 3) console.error(`[REDIS:${label}] Error:`, err?.message ?? err);
+      if (count === 3) console.error(`[REDIS:${label}] (suppressing further connection errors)`);
+    };
+  };
+  redisCache.on('error', errLogger('CACHE'));
+  redisSub.on('error',   errLogger('SUB'));
 
-  try {
-    await Promise.all([redisCache.connect(), redisSub.connect()]);
-    console.log('[REDIS] Cache + Sub clients connected');
-  } catch (err) {
-    console.error('[REDIS] Connection failed. Running without Redis cache/pubsub.', err);
-  }
+  const connectBg = (client: any, label: string) =>
+    client.connect()
+      .then(() => console.log(`[REDIS] ${label} connected`))
+      .catch((err: any) => console.warn(`[REDIS] ${label} unavailable:`, err?.message ?? err));
+
+  // Give Redis a short head start, then boot regardless.
+  await Promise.race([
+    Promise.all([connectBg(redisCache, 'cache'), connectBg(redisSub, 'sub')]),
+    new Promise<void>(resolve => setTimeout(resolve, 3000)),
+  ]);
 
   const cache     = new MarketDataCache(redisCache);
   const screens   = new ScreenStore(redisCache);
@@ -389,20 +411,35 @@ async function startServer() {
 
   // ── Redis Subscriptions ──
   const CHANNELS = ['raven:geo', 'raven:equity', 'raven:agent', 'raven:screen', 'raven:watchlist'];
-  if (redisSub.isOpen) {
-    await redisSub.subscribe(CHANNELS, (message, channel) => {
-      try {
-        const payload = JSON.parse(message);
-        if (channel === 'raven:geo' && payload.severity === 'danger') {
-          registry.broadcast({ ...payload, _fastPath: true }, 'raven:geo');
-          return;
-        }
-        registry.broadcast(payload, channel);
-      } catch (err) {
-        console.error(`[REDIS:SUB] Parse error on ${channel}:`, err);
+  const handleChannelMessage = (message: string, channel: string) => {
+    try {
+      const payload = JSON.parse(message);
+      if (channel === 'raven:geo' && payload.severity === 'danger') {
+        registry.broadcast({ ...payload, _fastPath: true }, 'raven:geo');
+        return;
       }
-    });
+      registry.broadcast(payload, channel);
+    } catch (err) {
+      console.error(`[REDIS:SUB] Parse error on ${channel}:`, err);
+    }
+  };
+
+  // Subscribe once, whenever the sub client first becomes ready — at boot if
+  // Redis is already up, or later when a delayed connection succeeds.
+  // (node-redis restores subscriptions itself on subsequent reconnects.)
+  let channelsSubscribed = false;
+  const subscribeChannels = async () => {
+    if (channelsSubscribed) return;
+    channelsSubscribed = true;
+    await redisSub.subscribe(CHANNELS, handleChannelMessage);
     console.log(`[REDIS:SUB] Subscribed to: ${CHANNELS.join(', ')}`);
+  };
+  if (redisSub.isOpen) {
+    await subscribeChannels();
+  } else {
+    redisSub.once('ready', () => {
+      subscribeChannels().catch(err => console.error('[REDIS:SUB] Subscribe failed:', err?.message ?? err));
+    });
   }
 
   // ── API Routes ──

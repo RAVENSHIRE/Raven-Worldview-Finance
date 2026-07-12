@@ -1,0 +1,27 @@
+{
+  "name": "Raven Worldview Finance",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Raven Worldview",
+      "onAutoForward": "openBrowserOnce"
+    }
+  },
+
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y redis-server && npm install",
+  "postStartCommand": "sudo redis-server --daemonize yes && { [ -n \"$GEMINI_API_KEY\" ] && printf 'GEMINI_API_KEY=\"%s\"\\n' \"$GEMINI_API_KEY\" > .env || true; }",
+
+  "secrets": {
+    "GEMINI_API_KEY": {
+      "description": "Google Gemini API key for the AI chat panel. Optional — the app runs fully without it (chat shows LINK_OFFLINE)."
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint"]
+    }
+  }
+}
