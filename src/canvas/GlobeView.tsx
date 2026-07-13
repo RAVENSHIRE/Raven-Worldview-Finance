@@ -1,6 +1,19 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import Globe from 'globe.gl';
+import * as topojson from 'topojson-client';
+import countries110m from 'world-atlas/countries-110m.json';
 import { StockNode, FinanceEvent } from '../types';
+import { useInteractionState } from '../store/useInteractionState';
+import { exchangeCoords } from '../lib/geo';
+
+// Convert the bundled TopoJSON world into GeoJSON country features once at
+// module load. This makes the globe fully self-contained — no external CDN
+// textures — so it renders reliably in any environment.
+const WORLD = topojson.feature(
+  countries110m as any,
+  (countries110m as any).objects.countries
+) as any;
+const COUNTRY_FEATURES = WORLD.features as any[];
 
 interface GlobeViewportProps {
   stocks: StockNode[];
@@ -9,11 +22,25 @@ interface GlobeViewportProps {
   onSelectStock: (stock: StockNode) => void;
   selectedStock?: StockNode | null;
   colorMode: 'change' | 'trump_beta';
+  portfolioTickers?: Set<string>;
 }
 
-export default function GlobeViewport({ stocks, events, activeLayers, onSelectStock, selectedStock, colorMode }: GlobeViewportProps) {
+export default function GlobeViewport({ stocks, events, activeLayers, onSelectStock, selectedStock, colorMode, portfolioTickers }: GlobeViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const globeInstance = useRef<any>(null);
+  const mousePos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const focusedTicker = useInteractionState(s => s.focusedTicker);
+  const hoveredTicker = useInteractionState(s => s.hoveredTicker);
+  const supplyChainOn = useInteractionState(s => s.layers.supplyChain);
+  const livePortfolioOn = useInteractionState(s => s.layers.livePortfolio);
+  const intel = useInteractionState(s => s.intel);
+
+  const stocksByTicker = useMemo(() => {
+    const m = new Map<string, StockNode>();
+    for (const s of stocks) m.set(s.ticker, s);
+    return m;
+  }, [stocks]);
 
   // Mock Shipping Corridors for Globe
   const ARCHS_DATA = [
@@ -26,27 +53,37 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
     if (!containerRef.current) return;
 
     const g = (Globe as any)()(containerRef.current)
-      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg')
-      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
-      .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
-      .atmosphereColor('#00E0FF')
-      .atmosphereAltitude(0.15)
-      // Arcs for Shipping Corridors
+      // Night-mode aesthetic: ultra-dark background + glowing atmosphere
+      .backgroundColor('#020408')
+      .showGlobe(true)
+      .showAtmosphere(true)
+      .atmosphereColor('#00FF88')
+      .atmosphereAltitude(0.25)
+      // Country landmasses
+      .polygonsData(COUNTRY_FEATURES)
+      .polygonCapColor(() => 'rgba(15, 25, 35, 0.75)')
+      .polygonSideColor(() => 'rgba(0, 224, 255, 0.04)')
+      .polygonStrokeColor(() => 'rgba(0, 255, 136, 0.35)')
+      .polygonAltitude(0.008)
+      .polygonLabel((d: any) => `<span style="font-family:monospace;font-size:9px;color:#00FF88;">${d?.properties?.name || ''}</span>`)
+      // Arcs: shipping corridors, Exchange→HQ listing links, supply-chain web.
+      // Per-arc styling via accessors so the three layers can coexist.
       .arcLabel(d => (d as any).name)
       .arcColor('color')
-      .arcDashLength(0.4)
-      .arcDashGap(4)
+      .arcDashLength((d: any) => d.dashLen ?? 0.4)
+      .arcDashGap((d: any) => d.dashGap ?? 4)
       .arcDashInitialGap(() => Math.random() * 5)
-      .arcDashAnimateTime(1000)
-      .arcStroke(0.1)
+      .arcDashAnimateTime((d: any) => d.animMs ?? 1000)
+      .arcStroke((d: any) => d.stroke ?? 0.1)
+      .arcAltitudeAutoScale(0.35)
       // Hex Bin (Sector Heatmap)
       .hexBinPointLat('lat')
       .hexBinPointLng('lon')
       .hexBinPointWeight(d => (d as StockNode).marketCap / 1e11)
       .hexBinResolution(4)
       .hexMargin(0.1)
-      .hexTopColor(() => '#00E0FF')
-      .hexSideColor(() => '#00E0FF22')
+      .hexTopColor(() => '#00FF88')
+      .hexSideColor(() => '#00FF8822')
       .hexLabel(d => {
         const points = (d as any).points as StockNode[];
         const sectorCount: Record<string, number> = {};
@@ -55,62 +92,45 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
         });
         const topSector = Object.entries(sectorCount).sort((a,b) => b[1] - a[1])[0]?.[0];
         return `
-          <div style="background: rgba(0,0,0,0.8); padding: 8px; border: 1px solid #00E0FF; font-size: 9px; font-family: 'JetBrains Mono';">
-            <div style="color: #00E0FF; font-weight: 900; margin-bottom: 4px;">SECTOR_CLUSTER: ${topSector || 'MIXED'}</div>
+          <div style="background: rgba(0,0,0,0.9); padding: 8px; border: 1px solid #00FF88; font-size: 9px; font-family: 'JetBrains Mono';">
+            <div style="color: #00FF88; font-weight: 900; margin-bottom: 4px;">SECTOR_CLUSTER: ${topSector || 'MIXED'}</div>
             <div style="opacity: 0.6;">CONVERGENCE_NODES: ${points.length}</div>
             <div style="opacity: 0.6;">TICKERS: ${points.map(p => p.ticker).join(', ')}</div>
           </div>
         `;
       })
-      // Points
+      // Points with volumetric glow effect
       .pointLat('lat')
       .pointLng('lon')
       .pointColor(d => {
         const stock = d as StockNode;
         if (colorMode === 'change') {
-           return stock.change1d > 0 ? '#00FF41' : stock.change1d < 0 ? '#FF3131' : '#8E9299';
+           return stock.change1d > 0 ? '#00FF66' : stock.change1d < 0 ? '#FF3844' : '#6B7280';
         } else {
            const beta = stock.trumpBeta || 0;
-           return beta > 7 ? '#D4AF37' : '#00E0FF';
+           return beta > 7 ? '#FFD700' : '#00FF88';
         }
       })
       .pointAltitude(0.02)
       .pointRadius(d => {
         const stock = d as StockNode;
-        return Math.max(0.2, Math.log10(stock.marketCap / 1e8) * 0.4);
+        return Math.max(0.25, Math.log10(stock.marketCap / 1e8) * 0.5);
       })
-      .pointLabel(d => {
-        const stock = d as StockNode;
-        return `
-          <div style="background: rgba(10,10,11,0.95); padding: 12px; border: 1px solid #00E0FF; border-radius: 2px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #fff; min-width: 140px;">
-            <div style="border-bottom: 1px solid #28282A; margin-bottom: 6px; padding-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-weight: 900; letter-spacing: -0.5px;">${stock.ticker}</span>
-                <span style="font-size: 8px; opacity: 0.5;">${stock.exchange}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                <span style="opacity: 0.6;">1D_CHG:</span>
-                <span style="color: ${stock.change1d >= 0 ? '#00FF41' : '#FF3131'}; font-weight: 900;">${stock.change1d > 0 ? '+' : ''}${stock.change1d}%</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                <span style="opacity: 0.6;">SIGNAL:</span>
-                <span style="color: #00E0FF; font-weight: 900;">${stock.momentumSignal || 'STEADY'}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                <span style="opacity: 0.6;">VAL_CAP:</span>
-                <span style="font-weight: 900;">$${(stock.marketCap / 1e9).toFixed(1)}B</span>
-            </div>
-            <div style="border-top: 1px solid #28282A; margin-top: 6px; padding-top: 4px; display: flex; justify-content: space-between; font-size: 8px;">
-                <span style="opacity: 0.4;">LAST_SYNK:</span>
-                <span style="color: ${stock.isStale ? '#FF3131' : '#00E0FF'};">${stock.lastUpdated ? new Date(stock.lastUpdated).toLocaleTimeString() : 'WAIT'}</span>
-            </div>
-          </div>
-        `;
+      // Hover drives the external glassmorphic NodeTooltip via global state —
+      // no built-in HTML label (it would double-render the card).
+      .pointLabel(() => '')
+      .onPointHover((d: any) => {
+        const setHovered = useInteractionState.getState().setHovered;
+        if (d) setHovered((d as StockNode).ticker, { ...mousePos.current });
+        else setHovered(null);
       })
       // Rings (Pulse Events)
       .ringLat('lat')
       .ringLng('lon')
       .ringColor(d => {
-        const e = d as FinanceEvent;
+        const e = d as FinanceEvent & { _portfolio?: boolean; _stopLoss?: boolean };
+        if (e._stopLoss) return 'rgba(255, 32, 48, 0.9)';   // stop-loss breach ripple
+        if (e._portfolio) return 'rgba(0, 240, 255, 0.7)';  // portfolio halo
         switch(e.severity) {
             case 'danger': return '#FF3131';
             case 'warn': return '#D4AF37';
@@ -118,15 +138,38 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
             default: return '#00E0FF';
         }
       })
-      .ringMaxRadius(3)
-      .ringPropagationSpeed(1.5)
-      .ringRepeatPeriod(1000)
-      .onPointClick((d: any) => onSelectStock(d as StockNode));
+      .ringMaxRadius((d: any) => d._stopLoss ? 7 : 3)
+      .ringPropagationSpeed((d: any) => d._stopLoss ? 3.2 : 1.5)
+      .ringRepeatPeriod((d: any) => d._stopLoss ? 650 : 1000)
+      .onPointClick((d: any) => {
+        onSelectStock(d as StockNode);
+        useInteractionState.getState().focusTicker((d as StockNode).ticker);
+      });
+
+    // Night-mode ocean with subtle city-lights glow
+    try {
+      const mat = g.globeMaterial();
+      mat.color?.set?.('#0a0e14');
+      if ('emissive' in mat) mat.emissive?.set?.('#001a2e');
+      if ('shininess' in mat) mat.shininess = 3;
+    } catch { /* material not ready — non-fatal */ }
 
     g.controls().autoRotate = true;
-    g.controls().autoRotateSpeed = 0.2;
+    g.controls().autoRotateSpeed = 0.35;
+
+    // Cinematic low-orbit opening view: off-center with the horizon curvature
+    // visible, rather than a dead-on staring globe.
+    g.pointOfView({ lat: 28, lng: -35, altitude: 2.1 }, 0);
 
     globeInstance.current = g;
+
+    // Track cursor so the hover tooltip can anchor next to the node.
+    const trackMouse = (e: MouseEvent) => {
+      mousePos.current = { x: e.clientX, y: e.clientY };
+      const st = useInteractionState.getState();
+      if (st.hoveredTicker) st.setHovered(st.hoveredTicker, { x: e.clientX, y: e.clientY });
+    };
+    containerRef.current.addEventListener('mousemove', trackMouse);
 
     const handleResize = () => {
       if (containerRef.current) {
@@ -137,34 +180,111 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
     window.addEventListener('resize', handleResize);
     handleResize();
 
+    const mountEl = containerRef.current;
     return () => {
       window.removeEventListener('resize', handleResize);
+      mountEl?.removeEventListener('mousemove', trackMouse);
       g?._destructor?.();
     };
   }, []);
 
   useEffect(() => {
     if (globeInstance.current) {
-      globeInstance.current.pointsData(activeLayers.includes('Signal Heatmap') ? [] : stocks);
-      globeInstance.current.hexBinPointsData(activeLayers.includes('Signal Heatmap') ? stocks : []);
+      const legacyHeatmap = activeLayers.includes('Signal Heatmap');
+      globeInstance.current.pointsData(legacyHeatmap ? [] : stocks);
+      // Heat zones: portfolio capital concentration binned over regions.
+      // Zones pulse red when the local book is in drawdown (macro red flag).
+      const heatPoints = legacyHeatmap
+        ? stocks
+        : (livePortfolioOn && portfolioTickers)
+          ? stocks.filter(s => portfolioTickers.has(s.ticker))
+          : [];
+      globeInstance.current
+        .hexTopColor((d: any) => {
+          const pts = (d?.points ?? []) as StockNode[];
+          const avg = pts.length ? pts.reduce((a, p) => a + p.change1d, 0) / pts.length : 0;
+          return avg <= -3 ? 'rgba(255,56,68,0.85)' : 'rgba(0,240,255,0.55)';
+        })
+        .hexSideColor((d: any) => {
+          const pts = (d?.points ?? []) as StockNode[];
+          const avg = pts.length ? pts.reduce((a, p) => a + p.change1d, 0) / pts.length : 0;
+          return avg <= -3 ? 'rgba(255,56,68,0.15)' : 'rgba(0,240,255,0.12)';
+        })
+        .hexBinPointsData(heatPoints);
     }
-  }, [stocks, activeLayers]);
+  }, [stocks, activeLayers, livePortfolioOn, portfolioTickers]);
 
   useEffect(() => {
     if (globeInstance.current) {
-      // Only show recent geo-located events on the globe if Pulse/Events layer is active
-      // Assumed mapping: 'Crypto Nodes' or implicit 'Events'
+      // Geo-located event pulses (legacy layers) + steady cyan halos marking
+      // the user's live portfolio assets on the globe.
       const showEvents = activeLayers.includes('Crypto Nodes') || activeLayers.includes('AIS Corridors');
       const mapEvents = showEvents ? events.filter(e => e.lat !== undefined && e.lon !== undefined) : [];
-      globeInstance.current.ringsData(mapEvents);
+      const held = (livePortfolioOn && portfolioTickers)
+        ? stocks.filter(s => portfolioTickers.has(s.ticker))
+        : [];
+      const halos = held.map(s => ({ lat: s.lat, lon: s.lon, _portfolio: true }));
+      // Stop-loss visualizer: a holding down through its trailing stop
+      // (-8% daily proxy) fires a fast red expanding ripple at its node.
+      const breaches = held
+        .filter(s => s.change1d <= -8)
+        .map(s => ({ lat: s.lat, lon: s.lon, _stopLoss: true }));
+      globeInstance.current.ringsData([...mapEvents, ...halos, ...breaches]);
     }
-  }, [events, activeLayers]);
+  }, [events, activeLayers, stocks, portfolioTickers, livePortfolioOn]);
 
+  // Capital-flow arcs. Three layers, recomputed on interaction changes:
+  //  1. Shipping corridors (legacy AIS layer)
+  //  2. Primary listing link: Exchange ──► Corporate HQ for the active asset
+  //  3. Supply-chain web: HQ ──► suppliers (amber) / customers (cyan), dotted
   useEffect(() => {
-    if (globeInstance.current) {
-        globeInstance.current.arcsData(activeLayers.includes('AIS Corridors') ? ARCHS_DATA : []);
+    if (!globeInstance.current) return;
+    const arcs: any[] = [];
+
+    if (activeLayers.includes('AIS Corridors')) arcs.push(...ARCHS_DATA);
+
+    const active = focusedTicker || hoveredTicker;
+    const stock = active ? stocksByTicker.get(active) : null;
+
+    if (stock) {
+      const ex = exchangeCoords(stock.exchange);
+      // Skip the listing link when exchange and HQ are effectively co-located
+      if (ex && (Math.abs(ex.lat - stock.lat) > 0.2 || Math.abs(ex.lon - stock.lon) > 0.2)) {
+        arcs.push({
+          startLat: ex.lat, startLng: ex.lon,
+          endLat: stock.lat, endLng: stock.lon,
+          color: ['#00f0ff', '#00ff66'],
+          name: `${stock.ticker} LISTING: ${ex.label} → HQ`,
+          stroke: 0.32, dashLen: 0.5, dashGap: 0.2, animMs: 1400,
+        });
+      }
+
+      if (supplyChainOn) {
+        const report = intel[stock.ticker];
+        for (const node of report?.supplyChain ?? []) {
+          if (node.lat == null || node.lon == null) continue;
+          arcs.push({
+            startLat: stock.lat, startLng: stock.lon,
+            endLat: node.lat, endLng: node.lon,
+            color: node.relation === 'customer' ? 'rgba(0,240,255,0.4)' : 'rgba(255,170,0,0.4)',
+            name: `${node.relation.toUpperCase()}: ${node.name}`,
+            stroke: 0.12, dashLen: 0.12, dashGap: 0.08, animMs: 2200,
+          });
+        }
+      }
     }
-  }, [activeLayers]);
+
+    globeInstance.current.arcsData(arcs);
+  }, [activeLayers, focusedTicker, hoveredTicker, supplyChainOn, intel, stocksByTicker]);
+
+  // "> LOAD PLTR" / pipeline-card focus: center the camera on the node.
+  useEffect(() => {
+    if (!globeInstance.current || !focusedTicker) return;
+    const stock = stocksByTicker.get(focusedTicker);
+    if (!stock) return;
+    globeInstance.current.controls().autoRotate = false;
+    globeInstance.current.pointOfView({ lat: stock.lat, lng: stock.lon, altitude: 1.2 }, 1200);
+  }, [focusedTicker, stocksByTicker]);
 
   useEffect(() => {
     if (globeInstance.current && selectedStock) {

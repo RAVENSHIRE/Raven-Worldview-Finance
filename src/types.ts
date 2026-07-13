@@ -83,6 +83,113 @@ export type SatelliteNode = {
   orbitType: string;
 };
 
+// ─── SCREENING WORKFLOW ───────────────────────────────────────────────────────
+// The screening report is treated as plain text first. Structured fields
+// (runs, outcomes, filter versions) layer on top incrementally.
+
+export type ScreenReport = {
+  id: string;
+  text: string;                 // raw plain-text screening blob
+  source?: string;              // e.g. external workflow name
+  filterVersionId?: string;     // filter version that produced this report
+  capturedAt: string;           // ISO timestamp
+};
+
+// Lightweight index entry for listing reports without shipping full blobs.
+export type ScreenReportMeta = {
+  id: string;
+  source?: string;
+  filterVersionId?: string;
+  capturedAt: string;
+  preview: string;              // first line / truncated head of the blob
+};
+
+// A stored snapshot of a screen run (winners/losers parsed from a report).
+export type ScreenRun = {
+  id: string;
+  reportId?: string;
+  filterVersionId?: string;
+  winners: string[];            // tickers
+  losers: string[];             // tickers
+  capturedAt: string;
+};
+
+// Next-day comparison of a run against realized outcomes.
+export type ScreenOutcome = {
+  runId: string;
+  hits: string[];               // screened tickers that moved as expected
+  misses: string[];             // screened tickers that did not
+  scoredAt: string;
+};
+
+// Append-only filter definition. New versions never delete prior ones;
+// `supersedes` links back to the version this one replaces.
+export type FilterVersion = {
+  id: string;
+  name: string;
+  criteria: string;             // plain-text or JSON string of the filter rules
+  supersedes?: string;
+  createdAt: string;
+};
+
+// ─── INTELLIGENCE PIPELINE ────────────────────────────────────────────────────
+// Output of the daily movers ingestion worker (Perplexity primary, LLM fallback).
+
+export type SupplyChainNode = {
+  name: string;
+  relation: 'supplier' | 'customer';
+  lat?: number;
+  lon?: number;
+};
+
+export type IntelReport = {
+  ticker: string;
+  catalystSummary: string;
+  informationAsymmetryScore: number;   // 1-10
+  narrativeConsensus: string;          // e.g. UNDERVALUED / STRONG ACCUMULATION
+  supplyChain: SupplyChainNode[];
+  source: 'perplexity' | 'fallback-llm' | 'stub';
+  generatedAt: string;
+};
+
+export type MoverEntry = {
+  ticker: string;
+  name: string;
+  price: number;
+  change1d: number;
+  volume: number;
+  direction: 'winner' | 'loser';
+};
+
+// Daily LLM macro outlook (Analyst AI). environment === 'risk-off' flips the
+// dashboard accent theme to amber.
+export type MacroOutlook = {
+  gdpGrowthYoY: number | null;
+  unemploymentTrend: 'rising' | 'falling' | 'stable' | 'unknown';
+  environment: 'risk-on' | 'risk-off' | 'neutral';
+  redFlags: string[];
+  summary: string;
+  vulnerableSectors: string[];
+  generatedAt: string;
+  source: 'perplexity' | 'fallback-llm' | 'stub';
+};
+
+// A user-added company placed on the globe. Resolved server-side from a live
+// quote + an approximate exchange location.
+export type WatchlistNode = {
+  ticker: string;
+  name: string;
+  exchange: string;
+  sector: string;
+  lat: number;
+  lon: number;
+  price: number;
+  change1d: number;
+  marketCap: number;
+  addedAt: string;
+  lastUpdated: string;
+};
+
 export const MOCK_STOCKS: StockNode[] = [
   {
     ticker: "PLTR",

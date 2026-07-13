@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { ChatMessage, StockNode } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -24,7 +24,11 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  // The @google/genai constructor THROWS in the browser when no key is set.
+  // Construct it once and only when a key exists, so a missing credential
+  // degrades to an offline chat instead of crashing the entire dashboard.
+  const apiKey = process.env.GEMINI_API_KEY;
+  const ai = useMemo(() => (apiKey ? new GoogleGenAI({ apiKey }) : null), [apiKey]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -44,6 +48,17 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
 
     setMessages(prev => [...prev, userMsg]);
     setInput('');
+
+    if (!ai) {
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: "AI_LINK_OFFLINE: No GEMINI_API_KEY configured. Chat is disabled, but the rest of the dashboard is fully operational.",
+        timestamp: new Date().toISOString()
+      }]);
+      return;
+    }
+
     setIsTyping(true);
 
     try {
@@ -88,8 +103,8 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
           <span className="text-[10px] font-black uppercase tracking-widest text-white">Quantum_Signal_Analyst</span>
         </div>
         <div className="flex items-center gap-2">
-           <div className="w-1.5 h-1.5 rounded-full bg-terminal-green animate-pulse" />
-           <span className="text-[8px] text-terminal-green uppercase">LINK_ACTIVE</span>
+           <div className={cn("w-1.5 h-1.5 rounded-full", ai ? "bg-terminal-green animate-pulse" : "bg-terminal-red")} />
+           <span className={cn("text-[8px] uppercase", ai ? "text-terminal-green" : "text-terminal-red")}>{ai ? 'LINK_ACTIVE' : 'LINK_OFFLINE'}</span>
         </div>
       </div>
 

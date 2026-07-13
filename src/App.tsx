@@ -1,5 +1,5 @@
-import { useMemo, useEffect, useCallback } from 'react';
-import { MOCK_STOCKS } from './types';
+import { useMemo, useEffect, useCallback, useState } from 'react';
+import { MOCK_STOCKS, StockNode, WatchlistNode } from './types';
 import PreMoverScorecard from './components/hud/PreMoverScorecard';
 import GlobeView from './canvas/GlobeView';
 import FlatView from './canvas/FlatView';
@@ -8,27 +8,68 @@ import LiveFeedSidebar from './components/hud/LiveFeedSidebar';
 import AIChat from './components/hud/AIChat';
 import Mirofish from './components/hud/Mirofish';
 import DeepDive from './components/hud/DeepDive';
+import WatchlistPanel from './components/hud/WatchlistPanel';
+import NodeTooltip from './components/hud/NodeTooltip';
+import PipelineCards from './components/hud/PipelineCards';
+import ValuationModel from './components/hud/ValuationModel';
+import RiskExposurePanel from './components/hud/RiskExposurePanel';
+import ErrorBoundary from './components/ErrorBoundary';
 import { cn } from './lib/utils';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Search, 
-  Globe, 
-  Map as MapIcon, 
+import {
+  Globe,
+  Map as MapIcon,
   Activity,
-  Layers,
-  ChevronRight,
-  ShieldAlert,
   Terminal,
-  RefreshCw,
-  AlertCircle
+  ChevronDown,
+  ChevronRight,
+  X,
 } from 'lucide-react';
 import { useMarketState } from './store/useMarketState';
 import { useSpatialState } from './store/useSpatialState';
+import { useScreenState } from './store/useScreenState';
+import { useWatchlistState } from './store/useWatchlistState';
+import { useInteractionState, LayerToggles } from './store/useInteractionState';
+
+// Watchlist nodes carry fewer fields than a full StockNode; fill spatial-render
+// defaults so they can flow through the same globe/monitor pipeline.
+const watchlistAsStock = (n: WatchlistNode): StockNode => ({
+  ticker: n.ticker,
+  name: n.name,
+  country: '',
+  iso_code: '',
+  lat: n.lat,
+  lon: n.lon,
+  exchange: n.exchange,
+  sector: n.sector,
+  themes: [],
+  marketCap: n.marketCap,
+  price: n.price,
+  change1d: n.change1d,
+  change5d: 0,
+  volume: 0,
+  avg30dVolume: 1,
+  lastUpdated: n.lastUpdated,
+});
+
+type Page = 'pipeline' | 'analyst' | 'operational' | 'signals' | 'reports';
+
+const PAGES: { id: Page; label: string }[] = [
+  { id: 'pipeline', label: 'PIPELINE' },
+  { id: 'analyst', label: 'ANALYST' },
+  { id: 'operational', label: 'OPERATIONAL' },
+  { id: 'signals', label: 'SIGNALS' },
+  { id: 'reports', label: 'REPORTS' },
+];
+
+const LAYER_DEFS: { key: keyof LayerToggles; label: string }[] = [
+  { key: 'livePortfolio', label: 'LIVE PORTFOLIO' },
+  { key: 'topMovers', label: 'DAILY TOP MOVERS' },
+  { key: 'supplyChain', label: 'SUPPLY CHAIN CORRIDORS' },
+];
 
 export default function App() {
-  // Decentralized State via Zustand
-  const { 
-    liveQuotes, setLiveQuotes, 
+  const {
+    liveQuotes, setLiveQuotes,
     selectedStock, setSelectedStock,
     events, addEvent,
     swarmMessages, addSwarmMessage,
@@ -36,36 +77,56 @@ export default function App() {
     syncError, setSyncError
   } = useMarketState();
 
-  const {
-    viewMode, setViewMode,
-    activeLayers, toggleLayer,
-    colorMode, setColorMode,
-    searchQuery, setSearchQuery,
-    showSignals, setShowSignals
-  } = useSpatialState();
+  const { viewMode, setViewMode, colorMode, setColorMode } = useSpatialState();
+  const { addReport, setReports, setActiveReport } = useScreenState();
+  const { nodes: watchlistNodes, setNodes: setWatchlistNodes, addNode: addWatchlistNode, removeNode: removeWatchlistNode } = useWatchlistState();
+
+  const layers = useInteractionState(s => s.layers);
+  const toggleLayerKey = useInteractionState(s => s.toggleLayerKey);
+  const focusedTicker = useInteractionState(s => s.focusedTicker);
+  const focusTicker = useInteractionState(s => s.focusTicker);
+  const setIntel = useInteractionState(s => s.setIntel);
+  const macro = useInteractionState(s => s.macro);
+  const setMacro = useInteractionState(s => s.setMacro);
+
+  const [page, setPage] = useState<Page>('pipeline');
+  const [command, setCommand] = useState('');
+  const [commandStatus, setCommandStatus] = useState<string | null>(null);
+  const [layersOpen, setLayersOpen] = useState(false);
+
+  const watchlistTickers = useMemo(
+    () => new Set(watchlistNodes.map(n => n.ticker)),
+    [watchlistNodes]
+  );
+
+  // Base universe = mock universe + user watchlist companies (deduped).
+  const baseNodes = useMemo(() => {
+    const extra = watchlistNodes
+      .filter(w => !MOCK_STOCKS.some(m => m.ticker === w.ticker))
+      .map(watchlistAsStock);
+    return [...MOCK_STOCKS, ...extra];
+  }, [watchlistNodes]);
 
   const fetchBatch = useCallback(async () => {
     setIsRefreshing(true);
     setSyncError(null);
-    
-    const symbolList = MOCK_STOCKS
+
+    const symbolList = baseNodes
       .filter(s => s.exchange && !s.exchange.includes('PRIVATE'))
       .map(s => encodeURIComponent(s.ticker));
 
     if (symbolList.length === 0) {
-        setIsRefreshing(false);
-        return;
+      setIsRefreshing(false);
+      return;
     }
-
-    const symbols = symbolList.join(',');
 
     try {
       const apiUrl = new URL('/api/market/batch', window.location.origin);
-      apiUrl.searchParams.set('symbols', symbols);
-      
+      apiUrl.searchParams.set('symbols', symbolList.join(','));
+
       const res = await fetch(apiUrl.toString());
       const data = await res.json();
-      
+
       if (!res.ok) {
         setSyncError({ code: data.error, message: data.details || 'Sync Failed' });
       } else {
@@ -77,30 +138,38 @@ export default function App() {
     } finally {
       setTimeout(() => setIsRefreshing(false), 800);
     }
-  }, [setIsRefreshing, setSyncError, setLiveQuotes]);
+  }, [baseNodes, setIsRefreshing, setSyncError, setLiveQuotes]);
 
   // WebSocket Ingest
   useEffect(() => {
     if (!window.location.host) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}`;
-    
     let ws: WebSocket;
     try {
-        ws = new WebSocket(wsUrl);
+      ws = new WebSocket(`${protocol}//${window.location.host}`);
     } catch (e) {
-        console.error("WebSocket Initialization Failed", e);
-        return;
+      console.error("WebSocket Initialization Failed", e);
+      return;
     }
 
     ws.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data);
         if (event.type === 'AGENT_TALK') {
-            addSwarmMessage(event);
+          addSwarmMessage(event);
+        } else if (event.type === 'SCREEN_REPORT') {
+          addReport(event.payload);
+        } else if (event.type === 'WATCHLIST_ADD') {
+          addWatchlistNode(event.payload);
+        } else if (event.type === 'WATCHLIST_REMOVE') {
+          removeWatchlistNode(event.payload.ticker);
+        } else if (event.type === 'INTEL_REPORT') {
+          setIntel(event.payload);
+        } else if (event.type === 'MACRO_UPDATE') {
+          setMacro(event.payload);
         } else {
-            addEvent(event);
+          addEvent(event);
         }
       } catch (e) {
         console.error("Pulse Sync Error", e);
@@ -108,20 +177,57 @@ export default function App() {
     };
 
     return () => ws.close();
-  }, [addEvent, addSwarmMessage]);
+  }, [addEvent, addSwarmMessage, addReport, addWatchlistNode, removeWatchlistNode, setIntel, setMacro]);
+
+  // Initial hydration of screening reports + watchlist.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const listRes = await fetch(new URL('/api/screen/reports?limit=20', window.location.origin).toString());
+        if (listRes.ok && !cancelled) setReports(await listRes.json());
+
+        const latestRes = await fetch(new URL('/api/screen/report/latest', window.location.origin).toString());
+        if (latestRes.ok && !cancelled) setActiveReport(await latestRes.json());
+
+        const wlRes = await fetch(new URL('/api/watchlist', window.location.origin).toString());
+        if (wlRes.ok && !cancelled) setWatchlistNodes(await wlRes.json());
+
+        const macroRes = await fetch(new URL('/api/macro', window.location.origin).toString());
+        if (macroRes.ok && !cancelled) setMacro(await macroRes.json());
+      } catch (e) {
+        console.error('HYDRATION_ERROR', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [setReports, setActiveReport, setWatchlistNodes, setMacro]);
+
+  // Pull the intelligence report for the focused asset (supply-chain web +
+  // tooltip narrative). 404 just means the worker hasn't covered it yet.
+  useEffect(() => {
+    if (!focusedTicker) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(new URL(`/api/intel/${focusedTicker}`, window.location.origin).toString());
+        if (res.ok && !cancelled) setIntel(await res.json());
+      } catch { /* intel is best-effort */ }
+    })();
+    return () => { cancelled = true; };
+  }, [focusedTicker, setIntel]);
 
   // Periodic Sync
   useEffect(() => {
-      fetchBatch();
-      const interval = setInterval(fetchBatch, 30000);
-      return () => clearInterval(interval);
+    fetchBatch();
+    const interval = setInterval(fetchBatch, 30000);
+    return () => clearInterval(interval);
   }, [fetchBatch]);
 
   const processedStocks = useMemo(() => {
-    return MOCK_STOCKS.map(s => {
+    return baseNodes.map(s => {
       const volumeSurge = s.volume / s.avg30dVolume;
       const quote = liveQuotes[s.ticker];
-      
+
       const currentPrice = (quote && quote.price !== undefined && quote.price !== null) ? Number(quote.price) : s.price;
       const currentChange = (quote && quote.change1d !== undefined && quote.change1d !== null) ? Number(quote.change1d) : s.change1d;
 
@@ -136,266 +242,373 @@ export default function App() {
         volumeSurge: quote ? Number(quote.volume) / s.avg30dVolume : volumeSurge,
       };
     });
-  }, [liveQuotes]);
+  }, [liveQuotes, baseNodes]);
 
-  const filteredStocks = useMemo(() => {
-    return processedStocks.filter(stock => {
-      const matchesSearch = stock.ticker.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          stock.name.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesSearch;
-    });
-  }, [processedStocks, searchQuery]);
+  const selectAndFocus = useCallback((s: StockNode) => {
+    setSelectedStock(s);
+    focusTicker(s.ticker);
+  }, [setSelectedStock, focusTicker]);
+
+  // "> LOAD PLTR" command: focus an existing node, or add it to the
+  // watchlist first so it lands on the globe and then gets focused.
+  const runCommand = useCallback(async () => {
+    const raw = command.trim();
+    if (!raw) return;
+    const ticker = raw.replace(/^load\s+/i, '').trim().toUpperCase();
+    setCommand('');
+    setCommandStatus(null);
+
+    const existing = processedStocks.find(s => s.ticker === ticker);
+    if (existing) {
+      selectAndFocus(existing);
+      setPage('pipeline');
+      return;
+    }
+
+    setCommandStatus(`RESOLVING ${ticker}…`);
+    try {
+      const res = await fetch(new URL('/api/watchlist', window.location.origin).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        addWatchlistNode(data);
+        selectAndFocus(watchlistAsStock(data));
+        setPage('pipeline');
+        setCommandStatus(null);
+      } else {
+        setCommandStatus(data.error === 'SYMBOL_NOT_FOUND' ? `UNKNOWN_SYMBOL: ${ticker}` : (data.error || 'LOAD_FAILED'));
+      }
+    } catch {
+      setCommandStatus('NETWORK_ERROR');
+    }
+  }, [command, processedStocks, selectAndFocus, addWatchlistNode]);
+
+  const riskOff = macro?.environment === 'risk-off';
 
   return (
-    <div className="grid grid-rows-[48px_1fr_200px] grid-cols-[260px_1fr_320px] h-screen w-screen overflow-hidden bg-terminal-bg font-mono selection:bg-terminal-cyan/30 text-white">
-      {/* Header HUD */}
-      <header className="col-span-3 border-b border-terminal-line bg-terminal-panel flex items-center justify-between px-5 z-50 shadow-lg">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 group cursor-pointer">
-            <div className="p-1 bg-terminal-cyan/10 rounded-sm">
-              <Activity className="text-terminal-cyan animate-pulse" size={16} />
-            </div>
-            <span className="font-black tracking-widest text-[12px] text-white uppercase group-hover:text-terminal-cyan transition-colors">
-              PRE-MOVER <span className="text-terminal-cyan underline decoration-terminal-cyan/30">SYSTEMS</span> <span className="text-[9px] opacity-30 font-normal ml-3">CORE_PROTO v5.0_SPATIAL</span>
-            </span>
-          </div>
-          
-          <div className="h-4 w-px bg-terminal-line mx-2" />
-          
-          <div className="flex gap-1 p-0.5 bg-black/40 border border-terminal-line rounded-sm">
-            <button 
-              onClick={() => setViewMode('globe')}
-              className={cn("p-1.5 transition-all rounded-[1px]", viewMode === 'globe' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
-            >
-              <Globe size={13} />
-            </button>
-            <button 
-              onClick={() => setViewMode('flat')}
-              className={cn("p-1.5 transition-all rounded-[1px]", viewMode === 'flat' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
-            >
-              <MapIcon size={13} />
-            </button>
-          </div>
+    <div className={cn(
+      "flex flex-col h-screen w-screen overflow-hidden bg-terminal-bg font-mono selection:bg-terminal-cyan/30 text-white",
+      riskOff && "risk-off"
+    )}>
+
+      {/* ── Command Bar ── */}
+      <header className="h-10 shrink-0 border-b border-terminal-line bg-terminal-panel flex items-center px-4 gap-4 z-50">
+        <div className="flex items-center gap-2 shrink-0">
+          <Activity className="text-terminal-cyan" size={13} />
+          <span className="font-black tracking-widest text-[10px] uppercase hidden lg:inline">
+            PRE-MOVER <span className="text-terminal-cyan">SYSTEMS</span>
+          </span>
         </div>
 
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-1 bg-black/40 rounded-sm p-1 border border-terminal-line">
-            <button 
-              onClick={() => setColorMode('change')}
-              className={cn("px-3 py-1 text-[9px] rounded-sm transition-colors uppercase font-black", colorMode === 'change' ? "bg-zinc-800 text-terminal-cyan border border-terminal-cyan/20" : "text-terminal-text-secondary hover:text-white")}
-            >REAL_TIME_1D</button>
-            <button 
-              onClick={() => setColorMode('trump_beta')}
-              className={cn("px-3 py-1 text-[9px] rounded-sm transition-colors uppercase font-black", colorMode === 'trump_beta' ? "bg-zinc-800 text-terminal-gold border border-terminal-gold/20" : "text-terminal-text-secondary hover:text-white")}
-            >MACRO_REVAL_β</button>
-          </div>
-          
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-terminal-text-secondary" size={12} />
-            <input 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="SEARCH_SIGNAL_NODE..."
-              className="terminal-input pl-8 w-52 placeholder:text-zinc-800 tracking-widest text-[10px]"
-            />
-          </div>
+        <nav className="flex items-center shrink-0">
+          {PAGES.map((p, i) => (
+            <span key={p.id} className="flex items-center">
+              {i > 0 && <span className="text-zinc-800 text-[9px] px-1">|</span>}
+              <button
+                onClick={() => setPage(p.id)}
+                className={cn(
+                  "px-2 py-1 text-[9px] font-black tracking-widest transition-all",
+                  page === p.id ? "text-terminal-cyan" : "text-zinc-600 hover:text-white"
+                )}
+              >
+                {p.label}{page === p.id && <span className="text-terminal-cyan/60"> (Active)</span>}
+              </button>
+            </span>
+          ))}
+        </nav>
 
-          <div className="flex gap-4 items-center">
-            <button 
-              onClick={fetchBatch}
+        <div className="flex items-center gap-2 flex-1 max-w-sm bg-black/40 border border-terminal-line rounded-sm px-2.5 py-1 focus-within:border-terminal-cyan/60 transition-colors">
+          <Terminal size={11} className="text-terminal-cyan shrink-0" />
+          <span className="text-terminal-cyan text-[10px] font-black">&gt;</span>
+          <input
+            value={command}
+            onChange={(e) => setCommand(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && runCommand()}
+            placeholder="LOAD PLTR"
+            className="flex-1 min-w-0 bg-transparent border-none outline-none text-[10px] uppercase tracking-widest placeholder:text-zinc-700"
+          />
+          {commandStatus && (
+            <span className="text-[8px] text-terminal-gold uppercase tracking-widest shrink-0">{commandStatus}</span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-4 ml-auto shrink-0">
+          {page === 'pipeline' && (
+            <div className="flex gap-0.5 p-0.5 bg-black/40 border border-terminal-line rounded-sm">
+              <button
+                onClick={() => setViewMode('globe')}
+                className={cn("p-1 rounded-[1px]", viewMode === 'globe' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
+              ><Globe size={11} /></button>
+              <button
+                onClick={() => setViewMode('flat')}
+                className={cn("p-1 rounded-[1px]", viewMode === 'flat' ? "bg-terminal-cyan text-black" : "text-zinc-600 hover:text-white")}
+              ><MapIcon size={11} /></button>
+            </div>
+          )}
+          <button
+            onClick={() => setColorMode(colorMode === 'change' ? 'trump_beta' : 'change')}
+            className="text-[8px] font-black uppercase tracking-widest text-zinc-500 hover:text-terminal-cyan transition-colors hidden md:inline"
+          >
+            {colorMode === 'change' ? 'REAL_TIME_1D' : 'MACRO_REVAL_β'}
+          </button>
+          {macro && macro.environment !== 'neutral' && (
+            <span
+              title={macro.summary}
               className={cn(
-                "flex items-center gap-2 px-3 py-1 text-[9px] font-black uppercase tracking-widest border transition-all rounded-sm",
-                isRefreshing ? "bg-terminal-cyan text-black border-terminal-cyan" : "bg-black/40 text-terminal-text-secondary border-terminal-line hover:border-terminal-cyan hover:text-white"
+                "text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-sm border",
+                riskOff
+                  ? "text-terminal-gold border-terminal-gold/50 bg-terminal-gold/10 animate-pulse"
+                  : "text-terminal-green border-terminal-green/40 bg-terminal-green/5"
               )}
-              disabled={isRefreshing}
             >
-              <RefreshCw size={12} className={cn(isRefreshing && "animate-spin")} />
-              <span>{isRefreshing ? 'SYNCING...' : 'REFRESH_DATA'}</span>
-            </button>
-            <Terminal size={14} className="text-zinc-600 hover:text-terminal-cyan cursor-pointer transition-colors" />
+              MACRO: {macro.environment.toUpperCase()}
+            </span>
+          )}
+          <div className="flex items-center gap-1.5 text-[8px] uppercase tracking-widest text-zinc-600">
+            <span>SYNC</span>
+            <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", isRefreshing ? "bg-terminal-gold" : syncError ? "bg-terminal-red" : "bg-terminal-green")} />
           </div>
+          <span className="text-[8px] text-zinc-700 font-black tracking-widest">
+            UTC {new Date().toISOString().slice(11, 16)}
+          </span>
         </div>
       </header>
 
-      {/* Left Rail HUD */}
-      <aside className="border-r border-terminal-line bg-terminal-panel flex flex-col p-4 z-10 overflow-hidden select-none gap-4">
-        {syncError && (
-          <div className="bg-terminal-red/10 border border-terminal-red/40 p-3 mb-2 rounded-sm flex flex-col gap-1 items-start relative overflow-hidden group">
-            <div className="absolute top-0 right-0 p-1 opacity-20 group-hover:opacity-100 transition-opacity cursor-pointer" onClick={() => setSyncError(null)}>
-              <Activity size={10} className="rotate-45" />
-            </div>
-            <div className="flex items-center gap-2 text-terminal-red">
-               <AlertCircle size={12} className="shrink-0" />
-               <span className="text-[10px] font-black uppercase tracking-widest">{syncError.code}</span>
-            </div>
-            <p className="text-[8px] text-white/50 leading-tight uppercase font-mono">{syncError.message}</p>
-          </div>
-        )}
-        <div className="flex-1 overflow-hidden flex flex-col gap-4">
-            <div className="flex-[0.6] min-h-[220px]">
-                <PreMoverScorecard stocks={processedStocks} />
-            </div>
+      {/* ── Pages ── */}
+      <div className="flex-1 min-h-0 relative">
 
-            <div className="flex-1 overflow-hidden flex flex-col">
-              <div className="flex items-center gap-2 mb-3">
-                <Layers size={12} className="text-terminal-cyan" />
-                <span className="text-[10px] font-black uppercase tracking-widest text-white">Operational Layers</span>
-              </div>
-              <div className="space-y-3 bg-black/20 p-4 border border-terminal-line rounded-sm">
-                 {['AIS Corridors', 'Aerospace Tracker', 'Crypto Nodes', 'Signal Heatmap'].map(layer => (
-                   <div 
-                    key={layer} 
-                    onClick={() => toggleLayer(layer)}
-                    className={cn(
-                        "flex items-center justify-between text-[10px] cursor-pointer group transition-all",
-                        activeLayers.includes(layer) ? "text-zinc-300" : "text-zinc-700 hover:text-zinc-500"
-                    )}
-                   >
-                      <span className="flex items-center gap-2">
-                        <ChevronRight size={10} className={cn("transition-transform", activeLayers.includes(layer) ? "rotate-90 text-terminal-cyan" : "")} />
-                        {layer}
-                      </span>
-                      <div className={cn(
-                        "w-6 h-3 rounded-full relative transition-colors",
-                        activeLayers.includes(layer) ? "bg-terminal-cyan/20 border border-terminal-cyan/40" : "bg-zinc-900 border border-zinc-800"
-                      )}>
-                        <div className={cn(
-                            "absolute top-0.5 w-2 h-2 rounded-full transition-all duration-300",
-                            activeLayers.includes(layer) ? "right-0.5 bg-terminal-cyan shadow-[0_0_8px_#00E0FF]" : "right-3.5 bg-zinc-700"
-                        )} />
-                      </div>
-                   </div>
-                 ))}
-              </div>
-            </div>
-        </div>
+        {/* PIPELINE — cinematic globe + monitor + watchlist pipeline rail.
+            Kept mounted (hidden) so the WebGL canvas survives page switches. */}
+        <div className={cn("absolute inset-0 grid grid-cols-[1fr_340px]", page !== 'pipeline' && "hidden")}>
+          <div className="flex flex-col min-w-0 min-h-0 overflow-hidden border-r border-terminal-line">
+            {/* Globe canvas */}
+            <div className="relative flex-1 min-h-0">
+              <ErrorBoundary label="SPATIAL_CANVAS">
+                {viewMode === 'globe' ? (
+                  <GlobeView
+                    stocks={processedStocks}
+                    events={events}
+                    activeLayers={[]}
+                    onSelectStock={selectAndFocus}
+                    selectedStock={selectedStock}
+                    colorMode={colorMode}
+                    portfolioTickers={watchlistTickers}
+                  />
+                ) : (
+                  <FlatView
+                    stocks={processedStocks}
+                    events={events}
+                    activeLayers={[]}
+                    onSelectStock={selectAndFocus}
+                    selectedStock={selectedStock}
+                    colorMode={colorMode}
+                  />
+                )}
+              </ErrorBoundary>
 
-        <div className="mt-auto pt-4 border-t border-terminal-line/50">
-            <div className="mb-4 bg-terminal-gold/5 border border-terminal-gold/20 p-2.5 rounded-sm">
-                <div className="flex items-center gap-2 mb-1.5">
-                    <ShieldAlert size={12} className="text-terminal-gold" />
-                    <span className="text-[9px] font-black text-terminal-gold uppercase">System_Alert</span>
+              <NodeTooltip stocks={processedStocks} />
+
+              {/* Grid status chip */}
+              <div className="absolute top-3 left-3 flex items-center gap-2 border-l-2 border-terminal-cyan bg-black/50 backdrop-blur-sm px-3 py-1.5 pointer-events-none select-none">
+                <div className="w-2 h-2 rounded-full bg-terminal-cyan shadow-[0_0_10px_#00f0ff] animate-pulse" />
+                <span className="text-[9px] font-black uppercase tracking-widest">
+                  GRID_ACTIVE: {Object.values(layers).filter(Boolean).length} LAYERS
+                </span>
+              </div>
+
+              {/* Layer micro-toggles accordion */}
+              <div className="absolute top-3 right-3 w-52 rounded-sm border border-terminal-line bg-terminal-panel/70 backdrop-blur-md select-none">
+                <button
+                  onClick={() => setLayersOpen(o => !o)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-[8px] font-black uppercase tracking-widest text-terminal-cyan"
+                >
+                  {layersOpen ? <ChevronDown size={9} /> : <ChevronRight size={9} />}
+                  SPATIAL LAYERS
+                </button>
+                {layersOpen && (
+                  <div className="px-3 pb-2 space-y-1">
+                    {LAYER_DEFS.map(l => (
+                      <label key={l.key} className="flex items-center gap-2 cursor-pointer group text-[8px]">
+                        <input
+                          type="checkbox"
+                          checked={layers[l.key]}
+                          onChange={() => toggleLayerKey(l.key)}
+                          className="w-2.5 h-2.5 accent-[#00f0ff] cursor-pointer"
+                        />
+                        <span className="text-zinc-400 group-hover:text-white transition-colors">{l.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Risk & Exposure spatial overlay */}
+              <div className="absolute bottom-3 left-3">
+                <ErrorBoundary label="RISK_EXPOSURE">
+                  <RiskExposurePanel stocks={processedStocks} portfolioTickers={watchlistTickers} />
+                </ErrorBoundary>
+              </div>
+
+              {/* Legend */}
+              <div className="absolute bottom-3 right-3 rounded-sm border border-terminal-line bg-black/50 backdrop-blur-sm px-3 py-2 pointer-events-none select-none">
+                <div className="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-1.5">LEGEND</div>
+                <div className="space-y-1 text-[8px] uppercase tracking-widest text-zinc-500">
+                  <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-terminal-red shadow-[0_0_6px_#ff3844]" /> LOSERS</div>
+                  <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-terminal-green shadow-[0_0_6px_#00ff66]" /> WINNERS</div>
+                  <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full border border-terminal-cyan shadow-[0_0_6px_#00f0ff]" /> PORTFOLIO</div>
                 </div>
-                <p className="text-[8px] leading-tight text-white/60 italic uppercase tracking-tighter">
-                   Information asymmetry localized. <br/> Cross-asset correlation active.
-                </p>
+                {syncError && (
+                  <div className="mt-1.5 pt-1.5 border-t border-terminal-red/30 text-[8px] text-terminal-red uppercase tracking-widest">
+                    {syncError.code}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex items-center justify-between text-[9px] text-zinc-700 font-bold tracking-widest">
-              <span>SYNC_LATENCY</span>
-              <span className="text-terminal-green flex items-center gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-terminal-green animate-pulse" /> +42ms
+
+            {/* Monitor table under the globe */}
+            <div className="h-52 shrink-0 border-t border-terminal-line bg-terminal-panel/60 flex flex-col">
+              <div className="flex items-center gap-3 px-3 py-1.5 border-b border-terminal-line">
+                <Activity size={10} className="text-terminal-cyan" />
+                <span className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan">MONITOR_NODE_ACTIVE</span>
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <ErrorBoundary label="EQUITY_MONITOR">
+                  <EquityMonitor
+                    stocks={processedStocks}
+                    onSelectStock={selectAndFocus}
+                    selectedStock={selectedStock}
+                    showSignals
+                  />
+                </ErrorBoundary>
+              </div>
+            </div>
+          </div>
+
+          {/* Watchlist pipeline rail */}
+          <aside className="bg-terminal-panel overflow-hidden flex flex-col">
+            <div className="px-3 py-2 border-b border-terminal-line flex items-center gap-2 shrink-0">
+              <span className="text-[9px] font-black uppercase tracking-widest text-white">WATCHLIST_PIPELINE</span>
+              <span className="text-[7px] uppercase tracking-widest text-terminal-green ml-auto flex items-center gap-1">
+                <span className="w-1 h-1 rounded-full bg-terminal-green animate-pulse" /> LIVE
               </span>
             </div>
-        </div>
-      </aside>
-
-      {/* 3D Canvas Viewport */}
-      <main className="relative bg-[#020202] overflow-hidden group">
-        <AnimatePresence mode="wait">
-          <motion.div 
-            key={viewMode}
-            initial={{ opacity: 0, scale: 0.99 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.01 }}
-            transition={{ duration: 0.4 }}
-            className="w-full h-full pb-[35%]"
-          >
-            {viewMode === 'globe' ? (
-              <GlobeView 
-                stocks={filteredStocks} 
-                events={events}
-                activeLayers={activeLayers}
-                onSelectStock={setSelectedStock} 
-                selectedStock={selectedStock}
-                colorMode={colorMode}
-              />
-            ) : (
-                <FlatView 
-                  stocks={filteredStocks}
-                  events={events}
-                  activeLayers={activeLayers}
-                  onSelectStock={setSelectedStock} 
-                  selectedStock={selectedStock}
-                  colorMode={colorMode}
+            <div className="flex-1 min-h-0">
+              <ErrorBoundary label="PIPELINE_CARDS">
+                <PipelineCards
+                  stocks={processedStocks}
+                  watchlistTickers={watchlistTickers}
+                  onSelect={selectAndFocus}
                 />
-            )}
-          </motion.div>
-        </AnimatePresence>
-
-        {/* Dynamic Context Workspace overlay */}
-        <div className="absolute bottom-0 left-0 right-0 h-[35%] bg-terminal-bg/95 backdrop-blur-md border-t border-terminal-line z-20 flex flex-col pointer-events-auto">
-            <div className="flex items-center gap-4 px-4 py-2 border-b border-terminal-line bg-terminal-panel/30">
-                <div className="flex items-center gap-2">
-                    <Activity size={10} className="text-terminal-cyan" />
-                    <span className="text-[9px] font-black uppercase tracking-widest text-terminal-cyan">Monitor_Node_Active</span>
-                </div>
-                <div className="h-4 w-px bg-terminal-line" />
-                <div className="flex items-center gap-2">
-                    <span className="text-[8px] text-terminal-text-secondary uppercase">Signals:</span>
-                    <button 
-                      onClick={() => setShowSignals(!showSignals)}
-                      className={cn(
-                        "w-7 h-3.5 rounded-full border border-terminal-line relative transition-all",
-                        showSignals ? "bg-terminal-cyan/20 border-terminal-cyan" : "bg-transparent"
-                      )}
-                    >
-                      <motion.div 
-                        layout 
-                        className={cn("absolute top-0.5 w-2 h-2 rounded-full", showSignals ? "bg-terminal-cyan right-0.5" : "bg-zinc-600 left-0.5")}
-                      />
-                    </button>
-                </div>
+              </ErrorBoundary>
             </div>
-
-            <div className="flex-1 min-h-0 overflow-hidden p-2">
-                <EquityMonitor 
-                  stocks={filteredStocks} 
-                  onSelectStock={setSelectedStock} 
-                  selectedStock={selectedStock}
-                  showSignals={showSignals}
-                />
-            </div>
+          </aside>
         </div>
 
-        {/* Spatial Information HUD Overlay */}
-        <div className="absolute top-6 left-6 pointer-events-none select-none">
-           <div className="stat-card bg-black/60 border-terminal-line/80 backdrop-blur-xl mb-0 py-2.5 px-4 shadow-2xl border-l-[3px] border-l-terminal-cyan">
-              <span className="text-[8px] text-terminal-text-secondary uppercase tracking-[0.2em] mb-1.5 block font-bold">Spatial_Intel_Engine</span>
-              <div className="flex items-center gap-3">
-                <div className="w-2.5 h-2.5 rounded-full bg-terminal-cyan shadow-[0_0_12px_#00E0FF] animate-pulse" />
-                <span className="text-[12px] font-black text-white uppercase tracking-widest">GRID_ACTIVE: {activeLayers.length} LAYERS</span>
+        {/* ANALYST — deep dive + reverse-DCF valuation + AI chat */}
+        {page === 'analyst' && (
+          <div className="absolute inset-0 grid grid-cols-[1fr_420px] bg-terminal-bg">
+            <main className="overflow-hidden border-r border-terminal-line">
+              <ErrorBoundary label="DEEP_DIVE">
+                {selectedStock ? (
+                  <div className="h-full flex flex-col overflow-y-auto">
+                    <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-line bg-terminal-panel sticky top-0 z-10">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-terminal-cyan">DEEP_DIVE: {selectedStock.ticker}</span>
+                      <button onClick={() => setSelectedStock(null)} className="text-zinc-600 hover:text-white"><X size={12} /></button>
+                    </div>
+                    <div className="h-[420px] shrink-0">
+                      <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
+                    </div>
+                    <div className="p-3">
+                      <ErrorBoundary label="VALUATION_MODEL">
+                        <ValuationModel stock={selectedStock} />
+                      </ErrorBoundary>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-[9px] uppercase tracking-widest text-zinc-700">
+                    Select an asset or type &gt; LOAD TICKER to open a deep dive
+                  </div>
+                )}
+              </ErrorBoundary>
+            </main>
+            <aside className="overflow-hidden bg-terminal-panel">
+              <ErrorBoundary label="AI_CHAT">
+                <AIChat selectedStock={selectedStock} swarmMessages={swarmMessages} />
+              </ErrorBoundary>
+            </aside>
+          </div>
+        )}
+
+        {/* OPERATIONAL — watchlist management + scoring */}
+        {page === 'operational' && (
+          <div className="absolute inset-0 grid grid-cols-[340px_1fr] bg-terminal-bg">
+            <aside className="border-r border-terminal-line bg-terminal-panel p-4 flex flex-col gap-4 overflow-hidden">
+              <div className="flex-1 min-h-0 flex flex-col">
+                <ErrorBoundary label="WATCHLIST">
+                  <WatchlistPanel onSelect={(n) => {
+                    selectAndFocus(watchlistAsStock(n));
+                    setPage('pipeline');
+                  }} />
+                </ErrorBoundary>
               </div>
-           </div>
-        </div>
-      </main>
+              <div className="shrink-0 border-t border-terminal-line/50 pt-4">
+                <div className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan mb-2">SPATIAL LAYERS</div>
+                <div className="space-y-1.5">
+                  {LAYER_DEFS.map(l => (
+                    <label key={l.key} className="flex items-center gap-2 cursor-pointer group text-[9px]">
+                      <input
+                        type="checkbox"
+                        checked={layers[l.key]}
+                        onChange={() => toggleLayerKey(l.key)}
+                        className="w-3 h-3 accent-[#00f0ff] cursor-pointer"
+                      />
+                      <span className="text-zinc-400 group-hover:text-white transition-colors">{l.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </aside>
+            <main className="overflow-y-auto p-4">
+              <ErrorBoundary label="SCORECARD">
+                <PreMoverScorecard stocks={processedStocks} />
+              </ErrorBoundary>
+            </main>
+          </div>
+        )}
 
-      {/* Right Rail HUD */}
-      <aside className="border-l border-terminal-line bg-terminal-panel flex flex-col p-0 z-20">
-         <div className="flex-1 overflow-hidden border-b border-terminal-line h-1/2">
-             <AIChat selectedStock={selectedStock} swarmMessages={swarmMessages} />
-         </div>
-         <div className="flex-1 overflow-hidden h-1/2">
-             {selectedStock ? (
-                 <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
-             ) : (
-                 <Mirofish selectedStock={selectedStock} />
-             )}
-         </div>
-      </aside>
+        {/* SIGNALS — live event feed */}
+        {page === 'signals' && (
+          <div className="absolute inset-0 grid grid-cols-[1fr_360px] bg-terminal-bg">
+            <main className="overflow-hidden border-r border-terminal-line p-2">
+              <ErrorBoundary label="EQUITY_MONITOR">
+                <EquityMonitor
+                  stocks={processedStocks}
+                  onSelectStock={selectAndFocus}
+                  selectedStock={selectedStock}
+                  showSignals
+                />
+              </ErrorBoundary>
+            </main>
+            <aside className="overflow-hidden bg-terminal-panel">
+              <ErrorBoundary label="LIVE_FEED">
+                <LiveFeedSidebar events={events} />
+              </ErrorBoundary>
+            </aside>
+          </div>
+        )}
 
-      {/* Bottom Data Convergence HUD */}
-      <footer className="col-span-3 border-t border-terminal-line bg-terminal-panel grid grid-cols-[1fr_320px] overflow-hidden">
-        <div className="border-r border-terminal-line overflow-hidden p-0">
-          <EquityMonitor 
-            stocks={filteredStocks} 
-            onSelectStock={setSelectedStock} 
-            selectedStock={selectedStock} 
-          />
-        </div>
-        <div className="overflow-hidden bg-black/20">
-           <LiveFeedSidebar events={events} />
-         </div>
-      </footer>
+        {/* REPORTS — screening report ingestion + viewer */}
+        {page === 'reports' && (
+          <div className="absolute inset-0 bg-terminal-bg">
+            <ErrorBoundary label="INTEL_PANEL">
+              <Mirofish selectedStock={selectedStock} />
+            </ErrorBoundary>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
