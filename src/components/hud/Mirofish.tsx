@@ -269,7 +269,7 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
                                 {[
                                     { label: 'ALPHA_VELOCITY', val: `${backtest.return}%`, color: 'text-terminal-green' },
                                     { label: 'RISK_VOLUMETRIC', val: `${backtest.maxDrawdown}%`, color: 'text-terminal-red' },
-                                    { label: 'SWARM_CONVICTION', val: backtest.sharpeRatio, color: 'text-terminal-cyan' },
+                                    { label: 'AI_SYSTEMATIC_SCORE', val: backtest.sharpeRatio, color: 'text-terminal-cyan' },
                                     { label: 'TACTICAL_NODES', val: backtest.trades, color: 'text-white' }
                                 ].map(s => (
                                     <div key={s.label} className="bg-white/[0.03] border border-terminal-line p-2.5 rounded-sm hover:border-terminal-gold/30 transition-colors">
@@ -281,7 +281,7 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
                                 <div className="col-span-2 mt-4 space-y-3">
                                     <div className="flex items-center gap-3">
                                         <div className="flex-1 h-px bg-terminal-line" />
-                                        <span className="text-[8px] text-zinc-700 uppercase font-bold">Execution_Authorize</span>
+                                        <span className="text-[8px] text-zinc-700 uppercase font-bold">Research_Acknowledge</span>
                                         <div className="flex-1 h-px bg-terminal-line" />
                                     </div>
 
@@ -297,11 +297,11 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
                                         <AnimatePresence mode="wait">
                                             {isExecuting ? (
                                                 <motion.div key="exec-ok" initial={{ x: -10 }} animate={{ x: 0 }} className="flex items-center gap-2">
-                                                    <ShieldCheck size={14} /> ORDER_DEPLOYED
+                                                    <ShieldCheck size={14} /> STATE_LOGGED
                                                 </motion.div>
                                             ) : (
                                                 <motion.div key="exec-idle" exit={{ x: 10 }} className="flex items-center gap-2">
-                                                    APPROVE_HIGH_CONVICTION_TRADE <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                                                    LOG_ALGORITHMIC_STATE <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
                                                 </motion.div>
                                             )}
                                         </AnimatePresence>
@@ -324,7 +324,7 @@ export default function Mirofish({ selectedStock }: MirofishProps) {
                               <span className="text-[8px] text-terminal-gold font-black uppercase tracking-widest">Spatial_Integrity_Report</span>
                           </div>
                           <p className="text-[9px] leading-relaxed text-zinc-400 italic">
-                             Swarm convergence detected at primary resistance levels for {selectedStock.exchange}. Boids-behavior analysis validates a "High-Conviction" entry path using the MiroFish v4.8 neural bridge.
+                             Swarm convergence detected at measured-move resistance for {selectedStock.exchange}. Boids-behavior analysis classifies an Expansion state above primary liquidity support via the MiroFish v4.8 neural bridge.
                           </p>
                       </div>
                   </div>

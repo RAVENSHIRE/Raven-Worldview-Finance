@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { StockNode } from '../../types';
 import { cn } from '../../lib/utils';
+import { evaluateRiskState } from '../../services/riskMonitoringEngine';
 import { ChevronDown, ChevronRight, ShieldAlert, Gauge } from 'lucide-react';
 
 interface RiskExposurePanelProps {
@@ -15,7 +16,7 @@ const regionOf = (lon: number): Region =>
 
 // Bottom-left glassmorphic "Risk & Exposure" overlay: translates classic 2D
 // portfolio-sheet metrics (AUM, net exposure, sector/region concentration,
-// stop-loss breaches) into the spatial workspace. Position sizes are
+// invalidation-level breaches) into the spatial workspace. Position sizes are
 // synthesized (~$1M notional per holding) until a real positions ledger exists.
 export default function RiskExposurePanel({ stocks, portfolioTickers }: RiskExposurePanelProps) {
   const [open, setOpen] = useState(true);
@@ -58,7 +59,11 @@ export default function RiskExposurePanel({ stocks, portfolioTickers }: RiskExpo
 
     // Day-weighted P&L as YTD-alpha stand-in until fills history exists.
     const dayAlpha = positions.reduce((sum, p) => sum + p.notional * (p.stock.change1d / 100), 0);
-    const breaches = portfolio.filter(s => s.change1d <= -8);
+    // Binary invalidation hook: numeric level when configured, -8% daily
+    // proxy until per-asset Invalidation_Level_Num values are populated.
+    const breaches = portfolio.filter(s =>
+      evaluateRiskState(s.price, s.invalidationLevelNum ?? 0) === 'INVALIDATED' || s.change1d <= -8
+    );
 
     return { aum, netExposure, topSector, regions, dayAlpha, breaches, count: portfolio.length };
   }, [stocks, portfolioTickers]);
@@ -126,12 +131,12 @@ export default function RiskExposurePanel({ stocks, portfolioTickers }: RiskExpo
               {model.breaches.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-terminal-red/30 text-[8px] uppercase tracking-widest">
                   <div className="text-terminal-red font-black mb-0.5 flex items-center gap-1">
-                    <ShieldAlert size={9} /> STOP-LOSS BREACH
+                    <ShieldAlert size={9} /> INVALIDATION_LEVEL BREACH
                   </div>
                   {model.breaches.map(b => (
                     <div key={b.ticker} className="flex justify-between text-zinc-400">
                       <span>{b.ticker}</span>
-                      <span className="text-terminal-red font-black">{b.change1d.toFixed(1)}%</span>
+                      <span className="text-terminal-red font-black">INVALIDATED {b.change1d.toFixed(1)}%</span>
                     </div>
                   ))}
                 </div>

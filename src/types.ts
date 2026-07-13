@@ -24,6 +24,13 @@ export type StockNode = {
   aiStrength?: number; // 0-10
   macroBeta?: number; // Correlation to global macro shifts
   momentumSignal?: 'accumulation' | 'breakout' | 'distribution' | 'neutral';
+  // Systematic research parameters (FinSA Art. 3 — no directive vocabulary).
+  // Numeric invalidation level drives the binary risk hook; support/resistance
+  // feed the algorithmic state classifier.
+  invalidationLevelNum?: number;
+  keySupport?: number;      // Primary_Liquidity_Support
+  keyResistance?: number;   // Measured_Move_Resistance
+  algorithmicState?: 'EXPANSION' | 'CONTRACTION' | 'NEUTRAL';
 };
 
 export type FinanceEvent = {
