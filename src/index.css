@@ -22,6 +22,13 @@
   }
 }
 
+/* Analyst-AI Risk-Off regime: primary glowing accents shift from cyan/green
+   to amber warning tones across every component reading the theme vars. */
+.risk-off {
+  --color-terminal-cyan: #ffaa00;
+  --color-terminal-green: #ffc860;
+}
+
 @layer components {
   .regime-badge {
     @apply bg-[rgba(0,224,255,0.1)] border border-terminal-cyan text-terminal-cyan px-2 py-0.5 text-[10px] uppercase rounded-sm font-mono font-bold tracking-wider;

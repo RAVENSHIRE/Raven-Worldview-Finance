@@ -11,6 +11,8 @@ import DeepDive from './components/hud/DeepDive';
 import WatchlistPanel from './components/hud/WatchlistPanel';
 import NodeTooltip from './components/hud/NodeTooltip';
 import PipelineCards from './components/hud/PipelineCards';
+import ValuationModel from './components/hud/ValuationModel';
+import RiskExposurePanel from './components/hud/RiskExposurePanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import { cn } from './lib/utils';
 import {
@@ -84,6 +86,8 @@ export default function App() {
   const focusedTicker = useInteractionState(s => s.focusedTicker);
   const focusTicker = useInteractionState(s => s.focusTicker);
   const setIntel = useInteractionState(s => s.setIntel);
+  const macro = useInteractionState(s => s.macro);
+  const setMacro = useInteractionState(s => s.setMacro);
 
   const [page, setPage] = useState<Page>('pipeline');
   const [command, setCommand] = useState('');
@@ -162,6 +166,8 @@ export default function App() {
           removeWatchlistNode(event.payload.ticker);
         } else if (event.type === 'INTEL_REPORT') {
           setIntel(event.payload);
+        } else if (event.type === 'MACRO_UPDATE') {
+          setMacro(event.payload);
         } else {
           addEvent(event);
         }
@@ -171,7 +177,7 @@ export default function App() {
     };
 
     return () => ws.close();
-  }, [addEvent, addSwarmMessage, addReport, addWatchlistNode, removeWatchlistNode, setIntel]);
+  }, [addEvent, addSwarmMessage, addReport, addWatchlistNode, removeWatchlistNode, setIntel, setMacro]);
 
   // Initial hydration of screening reports + watchlist.
   useEffect(() => {
@@ -186,12 +192,15 @@ export default function App() {
 
         const wlRes = await fetch(new URL('/api/watchlist', window.location.origin).toString());
         if (wlRes.ok && !cancelled) setWatchlistNodes(await wlRes.json());
+
+        const macroRes = await fetch(new URL('/api/macro', window.location.origin).toString());
+        if (macroRes.ok && !cancelled) setMacro(await macroRes.json());
       } catch (e) {
         console.error('HYDRATION_ERROR', e);
       }
     })();
     return () => { cancelled = true; };
-  }, [setReports, setActiveReport, setWatchlistNodes]);
+  }, [setReports, setActiveReport, setWatchlistNodes, setMacro]);
 
   // Pull the intelligence report for the focused asset (supply-chain web +
   // tooltip narrative). 404 just means the worker hasn't covered it yet.
@@ -277,8 +286,13 @@ export default function App() {
     }
   }, [command, processedStocks, selectAndFocus, addWatchlistNode]);
 
+  const riskOff = macro?.environment === 'risk-off';
+
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-terminal-bg font-mono selection:bg-terminal-cyan/30 text-white">
+    <div className={cn(
+      "flex flex-col h-screen w-screen overflow-hidden bg-terminal-bg font-mono selection:bg-terminal-cyan/30 text-white",
+      riskOff && "risk-off"
+    )}>
 
       {/* ── Command Bar ── */}
       <header className="h-10 shrink-0 border-b border-terminal-line bg-terminal-panel flex items-center px-4 gap-4 z-50">
@@ -340,6 +354,19 @@ export default function App() {
           >
             {colorMode === 'change' ? 'REAL_TIME_1D' : 'MACRO_REVAL_β'}
           </button>
+          {macro && macro.environment !== 'neutral' && (
+            <span
+              title={macro.summary}
+              className={cn(
+                "text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-sm border",
+                riskOff
+                  ? "text-terminal-gold border-terminal-gold/50 bg-terminal-gold/10 animate-pulse"
+                  : "text-terminal-green border-terminal-green/40 bg-terminal-green/5"
+              )}
+            >
+              MACRO: {macro.environment.toUpperCase()}
+            </span>
+          )}
           <div className="flex items-center gap-1.5 text-[8px] uppercase tracking-widest text-zinc-600">
             <span>SYNC</span>
             <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", isRefreshing ? "bg-terminal-gold" : syncError ? "bg-terminal-red" : "bg-terminal-green")} />
@@ -356,7 +383,7 @@ export default function App() {
         {/* PIPELINE — cinematic globe + monitor + watchlist pipeline rail.
             Kept mounted (hidden) so the WebGL canvas survives page switches. */}
         <div className={cn("absolute inset-0 grid grid-cols-[1fr_340px]", page !== 'pipeline' && "hidden")}>
-          <div className="flex flex-col min-w-0 border-r border-terminal-line">
+          <div className="flex flex-col min-w-0 min-h-0 overflow-hidden border-r border-terminal-line">
             {/* Globe canvas */}
             <div className="relative flex-1 min-h-0">
               <ErrorBoundary label="SPATIAL_CANVAS">
@@ -418,21 +445,27 @@ export default function App() {
                 )}
               </div>
 
+              {/* Risk & Exposure spatial overlay */}
+              <div className="absolute bottom-3 left-3">
+                <ErrorBoundary label="RISK_EXPOSURE">
+                  <RiskExposurePanel stocks={processedStocks} portfolioTickers={watchlistTickers} />
+                </ErrorBoundary>
+              </div>
+
               {/* Legend */}
-              <div className="absolute bottom-3 left-3 rounded-sm border border-terminal-line bg-black/50 backdrop-blur-sm px-3 py-2 pointer-events-none select-none">
+              <div className="absolute bottom-3 right-3 rounded-sm border border-terminal-line bg-black/50 backdrop-blur-sm px-3 py-2 pointer-events-none select-none">
                 <div className="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-1.5">LEGEND</div>
                 <div className="space-y-1 text-[8px] uppercase tracking-widest text-zinc-500">
                   <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-terminal-red shadow-[0_0_6px_#ff3844]" /> LOSERS</div>
                   <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-terminal-green shadow-[0_0_6px_#00ff66]" /> WINNERS</div>
                   <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full border border-terminal-cyan shadow-[0_0_6px_#00f0ff]" /> PORTFOLIO</div>
                 </div>
+                {syncError && (
+                  <div className="mt-1.5 pt-1.5 border-t border-terminal-red/30 text-[8px] text-terminal-red uppercase tracking-widest">
+                    {syncError.code}
+                  </div>
+                )}
               </div>
-
-              {syncError && (
-                <div className="absolute bottom-3 right-3 text-[8px] text-terminal-red uppercase tracking-widest border border-terminal-red/40 bg-terminal-red/10 backdrop-blur-sm px-2 py-1 rounded-sm">
-                  {syncError.code}
-                </div>
-              )}
             </div>
 
             {/* Monitor table under the globe */}
@@ -474,19 +507,24 @@ export default function App() {
           </aside>
         </div>
 
-        {/* ANALYST — AI chat + deep dive workspace */}
+        {/* ANALYST — deep dive + reverse-DCF valuation + AI chat */}
         {page === 'analyst' && (
           <div className="absolute inset-0 grid grid-cols-[1fr_420px] bg-terminal-bg">
             <main className="overflow-hidden border-r border-terminal-line">
               <ErrorBoundary label="DEEP_DIVE">
                 {selectedStock ? (
-                  <div className="h-full flex flex-col">
-                    <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-line bg-terminal-panel">
+                  <div className="h-full flex flex-col overflow-y-auto">
+                    <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-line bg-terminal-panel sticky top-0 z-10">
                       <span className="text-[9px] font-black uppercase tracking-widest text-terminal-cyan">DEEP_DIVE: {selectedStock.ticker}</span>
                       <button onClick={() => setSelectedStock(null)} className="text-zinc-600 hover:text-white"><X size={12} /></button>
                     </div>
-                    <div className="flex-1 min-h-0">
+                    <div className="h-[420px] shrink-0">
                       <DeepDive stock={selectedStock} onClose={() => setSelectedStock(null)} />
+                    </div>
+                    <div className="p-3">
+                      <ErrorBoundary label="VALUATION_MODEL">
+                        <ValuationModel stock={selectedStock} />
+                      </ErrorBoundary>
                     </div>
                   </div>
                 ) : (

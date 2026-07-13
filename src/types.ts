@@ -161,6 +161,19 @@ export type MoverEntry = {
   direction: 'winner' | 'loser';
 };
 
+// Daily LLM macro outlook (Analyst AI). environment === 'risk-off' flips the
+// dashboard accent theme to amber.
+export type MacroOutlook = {
+  gdpGrowthYoY: number | null;
+  unemploymentTrend: 'rising' | 'falling' | 'stable' | 'unknown';
+  environment: 'risk-on' | 'risk-off' | 'neutral';
+  redFlags: string[];
+  summary: string;
+  vulnerableSectors: string[];
+  generatedAt: string;
+  source: 'perplexity' | 'fallback-llm' | 'stub';
+};
+
 // A user-added company placed on the globe. Resolved server-side from a live
 // quote + an approximate exchange location.
 export type WatchlistNode = {

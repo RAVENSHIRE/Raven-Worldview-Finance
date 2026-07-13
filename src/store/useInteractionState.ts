@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { IntelReport } from '../types';
+import { IntelReport, MacroOutlook } from '../types';
 
 // Global interaction slice syncing the globe, tooltips, tables and command
 // line. Kept minimal and flat so updates don't cascade hard re-renders:
@@ -33,6 +33,10 @@ type InteractionState = {
   // Intel reports cache keyed by ticker (supply chain web + tooltip narrative)
   intel: Record<string, IntelReport>;
   setIntel: (report: IntelReport) => void;
+
+  // Daily macro outlook — a risk-off regime re-themes the dashboard amber.
+  macro: MacroOutlook | null;
+  setMacro: (outlook: MacroOutlook) => void;
 };
 
 export const useInteractionState = create<InteractionState>((set) => ({
@@ -54,4 +58,7 @@ export const useInteractionState = create<InteractionState>((set) => ({
   intel: {},
   setIntel: (report) =>
     set((s) => ({ intel: { ...s.intel, [report.ticker]: report } })),
+
+  macro: null,
+  setMacro: (outlook) => set({ macro: outlook }),
 }));

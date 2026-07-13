@@ -128,8 +128,9 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
       .ringLat('lat')
       .ringLng('lon')
       .ringColor(d => {
-        const e = d as FinanceEvent & { _portfolio?: boolean };
-        if (e._portfolio) return 'rgba(0, 240, 255, 0.7)';
+        const e = d as FinanceEvent & { _portfolio?: boolean; _stopLoss?: boolean };
+        if (e._stopLoss) return 'rgba(255, 32, 48, 0.9)';   // stop-loss breach ripple
+        if (e._portfolio) return 'rgba(0, 240, 255, 0.7)';  // portfolio halo
         switch(e.severity) {
             case 'danger': return '#FF3131';
             case 'warn': return '#D4AF37';
@@ -137,9 +138,9 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
             default: return '#00E0FF';
         }
       })
-      .ringMaxRadius(3)
-      .ringPropagationSpeed(1.5)
-      .ringRepeatPeriod(1000)
+      .ringMaxRadius((d: any) => d._stopLoss ? 7 : 3)
+      .ringPropagationSpeed((d: any) => d._stopLoss ? 3.2 : 1.5)
+      .ringRepeatPeriod((d: any) => d._stopLoss ? 650 : 1000)
       .onPointClick((d: any) => {
         onSelectStock(d as StockNode);
         useInteractionState.getState().focusTicker((d as StockNode).ticker);
@@ -189,10 +190,29 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
 
   useEffect(() => {
     if (globeInstance.current) {
-      globeInstance.current.pointsData(activeLayers.includes('Signal Heatmap') ? [] : stocks);
-      globeInstance.current.hexBinPointsData(activeLayers.includes('Signal Heatmap') ? stocks : []);
+      const legacyHeatmap = activeLayers.includes('Signal Heatmap');
+      globeInstance.current.pointsData(legacyHeatmap ? [] : stocks);
+      // Heat zones: portfolio capital concentration binned over regions.
+      // Zones pulse red when the local book is in drawdown (macro red flag).
+      const heatPoints = legacyHeatmap
+        ? stocks
+        : (livePortfolioOn && portfolioTickers)
+          ? stocks.filter(s => portfolioTickers.has(s.ticker))
+          : [];
+      globeInstance.current
+        .hexTopColor((d: any) => {
+          const pts = (d?.points ?? []) as StockNode[];
+          const avg = pts.length ? pts.reduce((a, p) => a + p.change1d, 0) / pts.length : 0;
+          return avg <= -3 ? 'rgba(255,56,68,0.85)' : 'rgba(0,240,255,0.55)';
+        })
+        .hexSideColor((d: any) => {
+          const pts = (d?.points ?? []) as StockNode[];
+          const avg = pts.length ? pts.reduce((a, p) => a + p.change1d, 0) / pts.length : 0;
+          return avg <= -3 ? 'rgba(255,56,68,0.15)' : 'rgba(0,240,255,0.12)';
+        })
+        .hexBinPointsData(heatPoints);
     }
-  }, [stocks, activeLayers]);
+  }, [stocks, activeLayers, livePortfolioOn, portfolioTickers]);
 
   useEffect(() => {
     if (globeInstance.current) {
@@ -200,12 +220,16 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
       // the user's live portfolio assets on the globe.
       const showEvents = activeLayers.includes('Crypto Nodes') || activeLayers.includes('AIS Corridors');
       const mapEvents = showEvents ? events.filter(e => e.lat !== undefined && e.lon !== undefined) : [];
-      const halos = (livePortfolioOn && portfolioTickers)
-        ? stocks
-            .filter(s => portfolioTickers.has(s.ticker))
-            .map(s => ({ lat: s.lat, lon: s.lon, _portfolio: true }))
+      const held = (livePortfolioOn && portfolioTickers)
+        ? stocks.filter(s => portfolioTickers.has(s.ticker))
         : [];
-      globeInstance.current.ringsData([...mapEvents, ...halos]);
+      const halos = held.map(s => ({ lat: s.lat, lon: s.lon, _portfolio: true }));
+      // Stop-loss visualizer: a holding down through its trailing stop
+      // (-8% daily proxy) fires a fast red expanding ripple at its node.
+      const breaches = held
+        .filter(s => s.change1d <= -8)
+        .map(s => ({ lat: s.lat, lon: s.lon, _stopLoss: true }));
+      globeInstance.current.ringsData([...mapEvents, ...halos, ...breaches]);
     }
   }, [events, activeLayers, stocks, portfolioTickers, livePortfolioOn]);
 

@@ -8,6 +8,7 @@ import yf from 'yahoo-finance2';
 import { createClient } from 'redis';
 import crypto from 'crypto';
 import { createIngestPipeline } from './workers/ingest';
+import { createMacroWorker } from './workers/macro';
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
 interface ConnectedClient {
@@ -474,6 +475,24 @@ async function startServer() {
   });
   ingest.startScheduler();
 
+  const macro = createMacroWorker({ redis: redisCache, broadcast: (p) => registry.broadcast(p) });
+  macro.startScheduler();
+
+  // Latest macro outlook (risk-on/off regime, red flags, vulnerable sectors).
+  app.get('/api/macro', async (_req, res) => {
+    const outlook = await macro.get();
+    if (!outlook) return res.status(404).json({ error: 'NO_MACRO_YET', hint: 'POST /api/macro/run to trigger' });
+    res.json(outlook);
+  });
+
+  app.post('/api/macro/run', async (_req, res) => {
+    try {
+      res.json(await macro.run());
+    } catch (e: any) {
+      res.status(500).json({ error: 'MACRO_FAILED', details: e?.message });
+    }
+  });
+
   // Latest isolated top-10 winners/losers snapshot.
   app.get('/api/movers', async (_req, res) => {
     const movers = await ingest.getMovers();
@@ -524,6 +543,75 @@ async function startServer() {
   app.get('/api/signals', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit as string || '50', 10) || 50, 200);
     res.json(await ingest.getSignals(limit));
+  });
+
+  // ── Fundamentals (3-statement history for the Reverse-DCF module) ──
+  // Merges yahoo quoteSummary statement modules into per-year rows. When the
+  // provider is unreachable, returns statements derived from the live quote
+  // (or plain heuristics) flagged source:'derived' so the UI can label them.
+  app.get('/api/fundamentals/:ticker', async (req, res) => {
+    const ticker = req.params.ticker.trim().toUpperCase();
+
+    const derived = (marketCap: number, currency = 'USD') => {
+      const y = new Date().getFullYear();
+      const revenue0 = marketCap > 0 ? marketCap / 6 : 5e9;
+      const rows = [2, 1, 0].map(back => {
+        const revenue = revenue0 / Math.pow(1.08, back);
+        return {
+          year: y - 1 - back,
+          revenue,
+          ebitda: revenue * 0.22,
+          netIncome: revenue * 0.12,
+          totalDebt: revenue * 0.35,
+          cash: revenue * 0.2,
+          totalStockholdersEquity: revenue * 0.8,
+          operatingCashFlow: revenue * 0.19,
+          capitalExpenditure: revenue * 0.05,
+          freeCashFlow: revenue * 0.14,
+        };
+      });
+      return { ticker, currency, marketCap: marketCap || revenue0 * 6, history: rows, source: 'derived' };
+    };
+
+    try {
+      const qs = await yahooFinance.quoteSummary(ticker, {
+        modules: ['incomeStatementHistory', 'balanceSheetHistory', 'cashflowStatementHistory', 'price'],
+      });
+
+      const byYear = new Map<number, any>();
+      const rowFor = (endDate: any) => {
+        const year = new Date(endDate).getFullYear();
+        if (!byYear.has(year)) byYear.set(year, { year });
+        return byYear.get(year);
+      };
+
+      for (const s of qs?.incomeStatementHistory?.incomeStatementHistory ?? []) {
+        const r = rowFor(s.endDate);
+        r.revenue = s.totalRevenue ?? 0;
+        r.ebitda = s.ebit ?? 0;                    // ebit as ebitda proxy when D&A absent
+        r.netIncome = s.netIncome ?? 0;
+      }
+      for (const s of qs?.balanceSheetHistory?.balanceSheetStatements ?? []) {
+        const r = rowFor(s.endDate);
+        r.cash = s.cash ?? 0;
+        r.totalDebt = (s.shortLongTermDebt ?? 0) + (s.longTermDebt ?? 0);
+        r.totalStockholdersEquity = s.totalStockholderEquity ?? 0;
+      }
+      for (const s of qs?.cashflowStatementHistory?.cashflowStatements ?? []) {
+        const r = rowFor(s.endDate);
+        r.operatingCashFlow = s.totalCashFromOperatingActivities ?? 0;
+        r.capitalExpenditure = s.capitalExpenditures ?? 0;
+      }
+
+      const history = Array.from(byYear.values()).sort((a, b) => a.year - b.year).slice(-3);
+      const marketCap = qs?.price?.marketCap ?? 0;
+      if (history.length === 0) return res.json(derived(marketCap, qs?.price?.currency ?? 'USD'));
+
+      res.json({ ticker, currency: qs?.price?.currency ?? 'USD', marketCap, history, source: 'api' });
+    } catch (e: any) {
+      console.warn(`[FUNDAMENTALS] ${ticker} provider fetch failed (${e?.message}); serving derived model`);
+      res.json(derived(0));
+    }
   });
 
   // PostgreSQL stub for /api/universe (Foundation Phase Task 4)
