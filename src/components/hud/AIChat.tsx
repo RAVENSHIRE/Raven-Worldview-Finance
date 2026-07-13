@@ -1,5 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
-import { GoogleGenAI } from "@google/genai";
+import { useState, useRef, useEffect } from 'react';
 import { ChatMessage, StockNode } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, Bot, User, Sparkles, BrainCircuit } from 'lucide-react';
@@ -24,11 +23,10 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // The @google/genai constructor THROWS in the browser when no key is set.
-  // Construct it once and only when a key exists, so a missing credential
-  // degrades to an offline chat instead of crashing the entire dashboard.
-  const apiKey = process.env.GEMINI_API_KEY;
-  const ai = useMemo(() => (apiKey ? new GoogleGenAI({ apiKey }) : null), [apiKey]);
+  // Claude conversation history (user/assistant turns, system prompt excluded).
+  // The /api/chat backend proxy holds the Anthropic key server-side.
+  const [history, setHistory] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [linkUp, setLinkUp] = useState(true);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -39,6 +37,10 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
   const handleSend = async () => {
     if (!input.trim() || isTyping) return;
 
+    const prompt = selectedStock
+      ? `Context: Selected asset is ${selectedStock.ticker} (${selectedStock.name}). Sector: ${selectedStock.sector}. Current Price: $${selectedStock.price}. IPO Status: ${selectedStock.ipoStatus}. AI Strength: ${selectedStock.aiStrength}. Macro Beta: ${selectedStock.macroBeta}. User Query: ${input}`
+      : input;
+
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
@@ -46,50 +48,43 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
       timestamp: new Date().toISOString()
     };
 
+    const nextHistory: { role: 'user' | 'assistant'; content: string }[] = [
+      ...history,
+      { role: 'user', content: prompt }
+    ];
+
     setMessages(prev => [...prev, userMsg]);
     setInput('');
-
-    if (!ai) {
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: "AI_LINK_OFFLINE: No GEMINI_API_KEY configured. Chat is disabled, but the rest of the dashboard is fully operational.",
-        timestamp: new Date().toISOString()
-      }]);
-      return;
-    }
-
     setIsTyping(true);
 
     try {
-      const chat = ai.chats.create({
-        model: "gemini-3-flash-latest",
-        config: { systemInstruction: SYSTEM_PROMPT }
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messages: nextHistory, systemPrompt: SYSTEM_PROMPT }),
       });
 
-      const prompt = selectedStock 
-        ? `Context: Selected asset is ${selectedStock.ticker} (${selectedStock.name}). Sector: ${selectedStock.sector}. Current Price: $${selectedStock.price}. IPO Status: ${selectedStock.ipoStatus}. AI Strength: ${selectedStock.aiStrength}. Macro Beta: ${selectedStock.macroBeta}. User Query: ${input}`
-        : input;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json() as { text?: string };
+      const text = data.text || 'NO_DATA_RETURNED';
 
-      const result = await chat.sendMessage({ message: prompt });
-      
-      const assistantMsg: ChatMessage = {
+      setHistory([...nextHistory, { role: 'assistant', content: text }]);
+      setLinkUp(true);
+      setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: result.text || "NO_DATA_RETURNED",
+        content: text,
         timestamp: new Date().toISOString()
-      };
-
-      setMessages(prev => [...prev, assistantMsg]);
+      }]);
     } catch (error) {
       console.error("AI CHAT ERROR:", error);
-      const errorMsg: ChatMessage = {
+      setLinkUp(false);
+      setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: "CRITICAL_ERROR: AI_LINK_FAILURE. Check system credentials.",
+        content: "CRITICAL_ERROR: CLAUDE_LINK_FAILURE. Check ANTHROPIC_API_KEY on the server.",
         timestamp: new Date().toISOString()
-      };
-      setMessages(prev => [...prev, errorMsg]);
+      }]);
     } finally {
       setIsTyping(false);
     }
@@ -103,8 +98,8 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
           <span className="text-[10px] font-black uppercase tracking-widest text-white">Quantum_Signal_Analyst</span>
         </div>
         <div className="flex items-center gap-2">
-           <div className={cn("w-1.5 h-1.5 rounded-full", ai ? "bg-terminal-green animate-pulse" : "bg-terminal-red")} />
-           <span className={cn("text-[8px] uppercase", ai ? "text-terminal-green" : "text-terminal-red")}>{ai ? 'LINK_ACTIVE' : 'LINK_OFFLINE'}</span>
+           <div className={cn("w-1.5 h-1.5 rounded-full", linkUp ? "bg-terminal-green animate-pulse" : "bg-terminal-red")} />
+           <span className={cn("text-[8px] uppercase", linkUp ? "text-terminal-green" : "text-terminal-red")}>{linkUp ? 'LINK_ACTIVE' : 'LINK_OFFLINE'}</span>
         </div>
       </div>
 
@@ -199,7 +194,7 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
           </button>
         </div>
         <div className="mt-2 flex justify-between items-center opacity-30 px-1">
-           <span className="text-[7px] uppercase tracking-tighter">Model: gemini-3-flash-latest</span>
+           <span className="text-[7px] uppercase tracking-tighter">Model: claude-sonnet-4-5</span>
            <span className="text-[7px] uppercase tracking-tighter">latency: 124ms</span>
         </div>
       </div>

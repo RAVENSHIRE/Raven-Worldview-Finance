@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -797,6 +798,55 @@ async function startServer() {
     res.json({ ok: true, ticker });
   });
 
+  // ── Claude AI Chat ──
+  // Backend proxy for the Quantum_Signal_Analyst chat: keeps the Anthropic key
+  // server-side and lets the client hold multi-turn history.
+  app.post('/api/chat', async (req, res) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured' });
+    }
+
+    const { messages, systemPrompt } = req.body as {
+      messages: { role: 'user' | 'assistant'; content: string }[];
+      systemPrompt?: string;
+    };
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'messages array required' });
+    }
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        console.error('[CLAUDE] API error:', response.status, err);
+        return res.status(502).json({ error: 'CLAUDE_API_ERROR', details: err });
+      }
+
+      const data = await response.json() as any;
+      const text = data?.content?.find((b: any) => b.type === 'text')?.text ?? '';
+      return res.json({ text });
+    } catch (e: any) {
+      console.error('[CLAUDE] Fetch error:', e);
+      return res.status(500).json({ error: 'CLAUDE_FETCH_ERROR', details: e.message });
+    }
+  });
+
   // Vite middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -810,9 +860,21 @@ async function startServer() {
     app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
+  httpServer.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.error(`[SERVER] Port ${PORT} is already in use. Stop the existing process or run on another port.`);
+      process.exit(0);
+    }
+    console.error('[SERVER] HTTP error:', err);
+    process.exit(1);
+  });
+
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Raven Worldview Active on http://localhost:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('[SERVER] Fatal startup error:', err);
+  process.exit(1);
+});
