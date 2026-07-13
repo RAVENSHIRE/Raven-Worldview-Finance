@@ -5,6 +5,7 @@ import countries110m from 'world-atlas/countries-110m.json';
 import { StockNode, FinanceEvent } from '../types';
 import { useInteractionState } from '../store/useInteractionState';
 import { exchangeCoords } from '../lib/geo';
+import { evaluateRiskState } from '../services/riskMonitoringEngine';
 
 // Convert the bundled TopoJSON world into GeoJSON country features once at
 // module load. This makes the globe fully self-contained — no external CDN
@@ -128,8 +129,8 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
       .ringLat('lat')
       .ringLng('lon')
       .ringColor(d => {
-        const e = d as FinanceEvent & { _portfolio?: boolean; _stopLoss?: boolean };
-        if (e._stopLoss) return 'rgba(255, 32, 48, 0.9)';   // stop-loss breach ripple
+        const e = d as FinanceEvent & { _portfolio?: boolean; _invalidated?: boolean };
+        if (e._invalidated) return 'rgba(255, 32, 48, 0.9)'; // invalidation-level breach ripple
         if (e._portfolio) return 'rgba(0, 240, 255, 0.7)';  // portfolio halo
         switch(e.severity) {
             case 'danger': return '#FF3131';
@@ -138,9 +139,9 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
             default: return '#00E0FF';
         }
       })
-      .ringMaxRadius((d: any) => d._stopLoss ? 7 : 3)
-      .ringPropagationSpeed((d: any) => d._stopLoss ? 3.2 : 1.5)
-      .ringRepeatPeriod((d: any) => d._stopLoss ? 650 : 1000)
+      .ringMaxRadius((d: any) => d._invalidated ? 7 : 3)
+      .ringPropagationSpeed((d: any) => d._invalidated ? 3.2 : 1.5)
+      .ringRepeatPeriod((d: any) => d._invalidated ? 650 : 1000)
       .onPointClick((d: any) => {
         onSelectStock(d as StockNode);
         useInteractionState.getState().focusTicker((d as StockNode).ticker);
@@ -224,11 +225,12 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
         ? stocks.filter(s => portfolioTickers.has(s.ticker))
         : [];
       const halos = held.map(s => ({ lat: s.lat, lon: s.lon, _portfolio: true }));
-      // Stop-loss visualizer: a holding down through its trailing stop
-      // (-8% daily proxy) fires a fast red expanding ripple at its node.
+      // Invalidation visualizer: a holding whose price breaks its numeric
+      // Invalidation_Level_Num (binary hook; -8% daily proxy until levels are
+      // populated) fires a fast red expanding ripple at its node.
       const breaches = held
-        .filter(s => s.change1d <= -8)
-        .map(s => ({ lat: s.lat, lon: s.lon, _stopLoss: true }));
+        .filter(s => evaluateRiskState(s.price, s.invalidationLevelNum ?? 0) === 'INVALIDATED' || s.change1d <= -8)
+        .map(s => ({ lat: s.lat, lon: s.lon, _invalidated: true }));
       globeInstance.current.ringsData([...mapEvents, ...halos, ...breaches]);
     }
   }, [events, activeLayers, stocks, portfolioTickers, livePortfolioOn]);
