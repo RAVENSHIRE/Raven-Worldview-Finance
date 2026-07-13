@@ -290,7 +290,7 @@ export default function App() {
       </aside>
 
       {/* 3D Canvas Viewport */}
-      <main className="relative bg-[#020202] overflow-hidden group">
+      <main className="relative bg-black overflow-hidden group row-span-1 col-span-1" style={{ minHeight: 0, minWidth: 0 }}>
         <AnimatePresence mode="wait">
           <motion.div 
             key={viewMode}
@@ -298,7 +298,7 @@ export default function App() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 1.01 }}
             transition={{ duration: 0.4 }}
-            className="w-full h-full pb-[35%]"
+            className="w-full h-full"
           >
             {viewMode === 'globe' ? (
               <GlobeView 

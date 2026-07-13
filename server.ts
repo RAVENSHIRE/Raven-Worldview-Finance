@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -35,7 +36,7 @@ class MarketDataCache {
   private readonly L1_TTL_MS = 30_000; // 30s
   private readonly L2_TTL_S  = 35;     // 35s
 
-  constructor(private redisClient: any) {}
+  constructor(private redisClient: any | null) {}
 
   private makeKey(symbols: string[]): string {
     return `market:batch:${crypto.createHash('md5').update(symbols.sort().join(',')).digest('hex')}`;
@@ -49,6 +50,7 @@ class MarketDataCache {
     if (l1 && (Date.now() - l1.cachedAt < l1.ttlMs)) return l1.data;
 
     // L2 Check (Redis)
+    if (!this.redisClient || !this.redisClient.isOpen) return null;
     try {
       const l2 = await this.redisClient.get(key);
       if (l2) {
@@ -66,6 +68,7 @@ class MarketDataCache {
   async set<T>(symbols: string[], data: T): Promise<void> {
     const key = this.makeKey(symbols);
     this.l1Cache.set(key, { data, cachedAt: Date.now(), ttlMs: this.L1_TTL_MS });
+    if (!this.redisClient || !this.redisClient.isOpen) return;
     try {
       await this.redisClient.setEx(key, this.L2_TTL_S, JSON.stringify(data));
     } catch (err) {
@@ -124,26 +127,72 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const PORT = parseInt(process.env.PORT || '3000', 10);
+  const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
   // ── Redis Setup ──
-  const redisCache = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
-  const redisSub   = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+  const redisCache = createClient({
+    url: redisUrl,
+    socket: {
+      // Disable endless reconnect noise when Redis is intentionally absent.
+      reconnectStrategy: () => false,
+    },
+  });
+  const redisSub   = createClient({
+    url: redisUrl,
+    socket: {
+      reconnectStrategy: () => false,
+    },
+  });
 
-  redisCache.on('error', err => console.error('[REDIS:CACHE] Error:', err));
-  redisSub.on('error',   err => console.error('[REDIS:SUB] Error:',   err));
+  let redisCacheConnected = false;
+  let redisSubConnected = false;
 
-  try {
-    await Promise.all([redisCache.connect(), redisSub.connect()]);
-    console.log('[REDIS] Cache + Sub clients connected');
-  } catch (err) {
-    console.error('[REDIS] Connection failed. Running without Redis cache/pubsub.', err);
+  redisCache.on('error', err => {
+    if ((err as any)?.code === 'ECONNREFUSED') {
+      console.warn('[REDIS:CACHE] ECONNREFUSED (Redis unavailable)');
+      return;
+    }
+    console.error('[REDIS:CACHE] Error:', err);
+  });
+  redisSub.on('error', err => {
+    if ((err as any)?.code === 'ECONNREFUSED') {
+      console.warn('[REDIS:SUB] ECONNREFUSED (Redis unavailable)');
+      return;
+    }
+    console.error('[REDIS:SUB] Error:', err);
+  });
+
+  const [cacheConnectResult, subConnectResult] = await Promise.allSettled([
+    redisCache.connect(),
+    redisSub.connect(),
+  ]);
+
+  redisCacheConnected = cacheConnectResult.status === 'fulfilled' && redisCache.isOpen;
+  redisSubConnected = subConnectResult.status === 'fulfilled' && redisSub.isOpen;
+
+  if (redisCacheConnected || redisSubConnected) {
+    console.log('[REDIS] Connected:', {
+      cache: redisCacheConnected,
+      sub: redisSubConnected,
+      url: redisUrl,
+    });
+  } else {
+    console.warn(`[REDIS] Connection failed at ${redisUrl}. Running without Redis cache/pubsub.`);
   }
 
-  const cache    = new MarketDataCache(redisCache);
+  const cache    = new MarketDataCache(redisCacheConnected ? redisCache : null);
   const registry = new ClientRegistry();
 
   // ── WebSocket Server ──
   const wss = new WebSocketServer({ server: httpServer });
+
+  wss.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.error(`[SERVER] Port ${PORT} is already in use. Another dev server is likely running.`);
+      return;
+    }
+    console.error('[WS] Server error:', err);
+  });
 
   wss.on('connection', (ws) => {
     const clientId = registry.register(ws);
@@ -182,7 +231,7 @@ async function startServer() {
 
   // ── Redis Subscriptions ──
   const CHANNELS = ['raven:geo', 'raven:equity', 'raven:agent'];
-  if (redisSub.isOpen) {
+  if (redisSubConnected) {
     await redisSub.subscribe(CHANNELS, (message, channel) => {
       try {
         const payload = JSON.parse(message);
@@ -259,6 +308,54 @@ async function startServer() {
     }
   });
 
+  // ── Claude AI Chat Endpoint ──
+  app.use(express.json());
+  app.post('/api/chat', async (req, res) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+    }
+
+    const { messages, systemPrompt } = req.body as {
+      messages: { role: 'user' | 'assistant'; content: string }[];
+      systemPrompt?: string;
+    };
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'messages array required' });
+    }
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        console.error('[CLAUDE] API error:', response.status, err);
+        return res.status(502).json({ error: 'CLAUDE_API_ERROR', details: err });
+      }
+
+      const data = await response.json() as any;
+      const text = data?.content?.[0]?.text ?? '';
+      return res.json({ text });
+    } catch (e: any) {
+      console.error('[CLAUDE] Fetch error:', e);
+      return res.status(500).json({ error: 'CLAUDE_FETCH_ERROR', details: e.message });
+    }
+  });
+
   // Vite middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -272,9 +369,21 @@ async function startServer() {
     app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
+  httpServer.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.error(`[SERVER] Port ${PORT} is already in use. Stop the existing process or run on another port.`);
+      process.exit(0);
+    }
+    console.error('[SERVER] HTTP error:', err);
+    process.exit(1);
+  });
+
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Raven Worldview Active on http://localhost:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('[SERVER] Fatal startup error:', err);
+  process.exit(1);
+});

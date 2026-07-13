@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI } from "@google/genai";
 import { ChatMessage, StockNode } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, Bot, User, Sparkles, BrainCircuit } from 'lucide-react';
@@ -24,7 +23,8 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  // conversation history for Claude (excludes system prompt)
+  const [history, setHistory] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -35,6 +35,10 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
   const handleSend = async () => {
     if (!input.trim() || isTyping) return;
 
+    const prompt = selectedStock
+      ? `Context: Selected asset is ${selectedStock.ticker} (${selectedStock.name}). Sector: ${selectedStock.sector}. Current Price: $${selectedStock.price}. IPO Status: ${selectedStock.ipoStatus}. AI Strength: ${selectedStock.aiStrength}. Macro Beta: ${selectedStock.macroBeta}. User Query: ${input}`
+      : input;
+
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
@@ -42,36 +46,44 @@ export default function AIChat({ selectedStock, swarmMessages = [] }: AIChatProp
       timestamp: new Date().toISOString()
     };
 
+    const nextHistory: { role: 'user' | 'assistant'; content: string }[] = [
+      ...history,
+      { role: 'user', content: prompt }
+    ];
+
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsTyping(true);
 
     try {
-      const chat = ai.chats.create({
-        model: "gemini-3-flash-latest",
-        config: { systemInstruction: SYSTEM_PROMPT }
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          messages: nextHistory,
+          systemPrompt: SYSTEM_PROMPT,
+        }),
       });
 
-      const prompt = selectedStock 
-        ? `Context: Selected asset is ${selectedStock.ticker} (${selectedStock.name}). Sector: ${selectedStock.sector}. Current Price: $${selectedStock.price}. IPO Status: ${selectedStock.ipoStatus}. AI Strength: ${selectedStock.aiStrength}. Macro Beta: ${selectedStock.macroBeta}. User Query: ${input}`
-        : input;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json() as { text?: string; error?: string };
+      const text = data.text || 'NO_DATA_RETURNED';
 
-      const result = await chat.sendMessage({ message: prompt });
-      
       const assistantMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: result.text || "NO_DATA_RETURNED",
+        content: text,
         timestamp: new Date().toISOString()
       };
 
+      setHistory([...nextHistory, { role: 'assistant', content: text }]);
       setMessages(prev => [...prev, assistantMsg]);
     } catch (error) {
       console.error("AI CHAT ERROR:", error);
       const errorMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: "CRITICAL_ERROR: AI_LINK_FAILURE. Check system credentials.",
+        content: "CRITICAL_ERROR: CLAUDE_LINK_FAILURE. Check system credentials.",
         timestamp: new Date().toISOString()
       };
       setMessages(prev => [...prev, errorMsg]);

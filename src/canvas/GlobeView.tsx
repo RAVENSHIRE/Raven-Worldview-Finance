@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Globe from 'globe.gl';
 import { StockNode, FinanceEvent } from '../types';
 
@@ -14,6 +14,8 @@ interface GlobeViewportProps {
 export default function GlobeViewport({ stocks, events, activeLayers, onSelectStock, selectedStock, colorMode }: GlobeViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const globeInstance = useRef<any>(null);
+  const [globeReady, setGlobeReady] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
 
   // Mock Shipping Corridors for Globe
   const ARCHS_DATA = [
@@ -23,124 +25,140 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
   ];
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    console.log("[GLOBE] Effect started, container:", containerRef.current);
+    if (!containerRef.current) {
+      console.error("[GLOBE] Container ref not available");
+      return;
+    }
 
-    const g = (Globe as any)()(containerRef.current)
-      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg')
-      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
-      .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
-      .atmosphereColor('#00E0FF')
-      .atmosphereAltitude(0.15)
-      // Arcs for Shipping Corridors
-      .arcLabel(d => (d as any).name)
-      .arcColor('color')
-      .arcDashLength(0.4)
-      .arcDashGap(4)
-      .arcDashInitialGap(() => Math.random() * 5)
-      .arcDashAnimateTime(1000)
-      .arcStroke(0.1)
-      // Hex Bin (Sector Heatmap)
-      .hexBinPointLat('lat')
-      .hexBinPointLng('lon')
-      .hexBinPointWeight(d => (d as StockNode).marketCap / 1e11)
-      .hexBinResolution(4)
-      .hexMargin(0.1)
-      .hexTopColor(() => '#00E0FF')
-      .hexSideColor(() => '#00E0FF22')
-      .hexLabel(d => {
-        const points = (d as any).points as StockNode[];
-        const sectorCount: Record<string, number> = {};
-        points.forEach(p => {
-            sectorCount[p.sector] = (sectorCount[p.sector] || 0) + 1;
-        });
-        const topSector = Object.entries(sectorCount).sort((a,b) => b[1] - a[1])[0]?.[0];
-        return `
-          <div style="background: rgba(0,0,0,0.8); padding: 8px; border: 1px solid #00E0FF; font-size: 9px; font-family: 'JetBrains Mono';">
-            <div style="color: #00E0FF; font-weight: 900; margin-bottom: 4px;">SECTOR_CLUSTER: ${topSector || 'MIXED'}</div>
-            <div style="opacity: 0.6;">CONVERGENCE_NODES: ${points.length}</div>
-            <div style="opacity: 0.6;">TICKERS: ${points.map(p => p.ticker).join(', ')}</div>
-          </div>
-        `;
-      })
-      // Points
-      .pointLat('lat')
-      .pointLng('lon')
-      .pointColor(d => {
-        const stock = d as StockNode;
-        if (colorMode === 'change') {
-           return stock.change1d > 0 ? '#00FF41' : stock.change1d < 0 ? '#FF3131' : '#8E9299';
-        } else {
-           const beta = stock.trumpBeta || 0;
-           return beta > 7 ? '#D4AF37' : '#00E0FF';
+    console.log("[GLOBE] Initializing globe with container:", containerRef.current);
+    console.log("[GLOBE] Stocks data:", stocks.length, "items");
+
+    try {
+      // Try to dynamically import and initialize globe.gl
+      const g = (Globe as any)()(containerRef.current)
+        .globeImageUrl('//unpkg.com/three-globe/example/img/earth-dark.jpg')
+        .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
+        .backgroundImageUrl('//unpkg.com/three-globe/example/img/night-sky.png')
+        .atmosphereColor('#00E0FF')
+        .atmosphereAltitude(0.15)
+        .arcLabel(d => (d as any).name)
+        .arcColor('color')
+        .arcDashLength(0.4)
+        .arcDashGap(4)
+        .arcDashInitialGap(() => Math.random() * 5)
+        .arcDashAnimateTime(1000)
+        .arcStroke(0.1)
+        .hexBinPointLat('lat')
+        .hexBinPointLng('lon')
+        .hexBinPointWeight(d => (d as StockNode).marketCap / 1e11)
+        .hexBinResolution(4)
+        .hexMargin(0.1)
+        .hexTopColor(() => '#00E0FF')
+        .hexSideColor(() => '#00E0FF22')
+        .hexLabel(d => {
+          const points = (d as any).points as StockNode[];
+          const sectorCount: Record<string, number> = {};
+          points.forEach(p => {
+              sectorCount[p.sector] = (sectorCount[p.sector] || 0) + 1;
+          });
+          const topSector = Object.entries(sectorCount).sort((a,b) => b[1] - a[1])[0]?.[0];
+          return `
+            <div style="background: rgba(0,0,0,0.8); padding: 8px; border: 1px solid #00E0FF; font-size: 9px; font-family: 'JetBrains Mono';">
+              <div style="color: #00E0FF; font-weight: 900; margin-bottom: 4px;">SECTOR_CLUSTER: ${topSector || 'MIXED'}</div>
+              <div style="opacity: 0.6;">CONVERGENCE_NODES: ${points.length}</div>
+              <div style="opacity: 0.6;">TICKERS: ${points.map(p => p.ticker).join(', ')}</div>
+            </div>
+          `;
+        })
+        .pointLat('lat')
+        .pointLng('lon')
+        .pointColor(d => {
+          const stock = d as StockNode;
+          if (colorMode === 'change') {
+             return stock.change1d > 0 ? '#00FF41' : stock.change1d < 0 ? '#FF3131' : '#8E9299';
+          } else {
+             const beta = stock.trumpBeta || 0;
+             return beta > 7 ? '#D4AF37' : '#00E0FF';
+          }
+        })
+        .pointAltitude(0.02)
+        .pointRadius(d => {
+          const stock = d as StockNode;
+          return Math.max(0.2, Math.log10(stock.marketCap / 1e8) * 0.4);
+        })
+        .pointLabel(d => {
+          const stock = d as StockNode;
+          return `
+            <div style="background: rgba(10,10,11,0.95); padding: 12px; border: 1px solid #00E0FF; border-radius: 2px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #fff; min-width: 140px;">
+              <div style="border-bottom: 1px solid #28282A; margin-bottom: 6px; padding-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
+                  <span style="font-weight: 900; letter-spacing: -0.5px;">${stock.ticker}</span>
+                  <span style="font-size: 8px; opacity: 0.5;">${stock.exchange}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                  <span style="opacity: 0.6;">1D_CHG:</span>
+                  <span style="color: ${stock.change1d >= 0 ? '#00FF41' : '#FF3131'}; font-weight: 900;">${stock.change1d > 0 ? '+' : ''}${stock.change1d}%</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                  <span style="opacity: 0.6;">SIGNAL:</span>
+                  <span style="color: #00E0FF; font-weight: 900;">${stock.momentumSignal || 'STEADY'}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                  <span style="opacity: 0.6;">VAL_CAP:</span>
+                  <span style="font-weight: 900;">$${(stock.marketCap / 1e9).toFixed(1)}B</span>
+              </div>
+              <div style="border-top: 1px solid #28282A; margin-top: 6px; padding-top: 4px; display: flex; justify-content: space-between; font-size: 8px;">
+                  <span style="opacity: 0.4;">LAST_SYNK:</span>
+                  <span style="color: ${stock.isStale ? '#FF3131' : '#00E0FF'};">${stock.lastUpdated ? new Date(stock.lastUpdated).toLocaleTimeString() : 'WAIT'}</span>
+              </div>
+            </div>
+          `;
+        })
+        .ringLat('lat')
+        .ringLng('lon')
+        .ringColor(d => {
+          const e = d as FinanceEvent;
+          switch(e.severity) {
+              case 'danger': return '#FF3131';
+              case 'warn': return '#D4AF37';
+              case 'success': return '#00FF41';
+              default: return '#00E0FF';
+          }
+        })
+        .ringMaxRadius(3)
+        .ringPropagationSpeed(1.5)
+        .ringRepeatPeriod(1000)
+        .onPointClick((d: any) => onSelectStock(d as StockNode));
+
+      g.controls().autoRotate = true;
+      g.controls().autoRotateSpeed = 0.2;
+
+      globeInstance.current = g;
+      console.log("[GLOBE] Globe initialized successfully");
+      setGlobeReady(true);
+
+      const handleResize = () => {
+        if (containerRef.current && globeInstance.current) {
+          const w = containerRef.current.clientWidth;
+          const h = containerRef.current.clientHeight;
+          console.log("[GLOBE] Resizing to:", w, "x", h);
+          g.width(w);
+          g.height(h);
         }
-      })
-      .pointAltitude(0.02)
-      .pointRadius(d => {
-        const stock = d as StockNode;
-        return Math.max(0.2, Math.log10(stock.marketCap / 1e8) * 0.4);
-      })
-      .pointLabel(d => {
-        const stock = d as StockNode;
-        return `
-          <div style="background: rgba(10,10,11,0.95); padding: 12px; border: 1px solid #00E0FF; border-radius: 2px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #fff; min-width: 140px;">
-            <div style="border-bottom: 1px solid #28282A; margin-bottom: 6px; padding-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-weight: 900; letter-spacing: -0.5px;">${stock.ticker}</span>
-                <span style="font-size: 8px; opacity: 0.5;">${stock.exchange}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                <span style="opacity: 0.6;">1D_CHG:</span>
-                <span style="color: ${stock.change1d >= 0 ? '#00FF41' : '#FF3131'}; font-weight: 900;">${stock.change1d > 0 ? '+' : ''}${stock.change1d}%</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                <span style="opacity: 0.6;">SIGNAL:</span>
-                <span style="color: #00E0FF; font-weight: 900;">${stock.momentumSignal || 'STEADY'}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                <span style="opacity: 0.6;">VAL_CAP:</span>
-                <span style="font-weight: 900;">$${(stock.marketCap / 1e9).toFixed(1)}B</span>
-            </div>
-            <div style="border-top: 1px solid #28282A; margin-top: 6px; padding-top: 4px; display: flex; justify-content: space-between; font-size: 8px;">
-                <span style="opacity: 0.4;">LAST_SYNK:</span>
-                <span style="color: ${stock.isStale ? '#FF3131' : '#00E0FF'};">${stock.lastUpdated ? new Date(stock.lastUpdated).toLocaleTimeString() : 'WAIT'}</span>
-            </div>
-          </div>
-        `;
-      })
-      // Rings (Pulse Events)
-      .ringLat('lat')
-      .ringLng('lon')
-      .ringColor(d => {
-        const e = d as FinanceEvent;
-        switch(e.severity) {
-            case 'danger': return '#FF3131';
-            case 'warn': return '#D4AF37';
-            case 'success': return '#00FF41';
-            default: return '#00E0FF';
-        }
-      })
-      .ringMaxRadius(3)
-      .ringPropagationSpeed(1.5)
-      .ringRepeatPeriod(1000)
-      .onPointClick((d: any) => onSelectStock(d as StockNode));
+      };
+      
+      window.addEventListener('resize', handleResize);
+      handleResize();
 
-    g.controls().autoRotate = true;
-    g.controls().autoRotateSpeed = 0.2;
-
-    globeInstance.current = g;
-
-    const handleResize = () => {
-      if (containerRef.current) {
-        g.width(containerRef.current.clientWidth);
-        g.height(containerRef.current.clientHeight);
-      }
-    };
-    window.addEventListener('resize', handleResize);
-    handleResize();
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      g?._destructor?.();
-    };
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        g?._destructor?.();
+      };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error("[GLOBE] Initialization error:", err);
+      setInitError(errorMsg);
+    }
   }, []);
 
   useEffect(() => {
@@ -193,5 +211,51 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
     }
   }, [selectedStock]);
 
-  return <div ref={containerRef} className="w-full h-full bg-black/10" />;
+  return (
+    <div 
+      ref={containerRef} 
+      className="w-full h-full"
+      style={{ 
+        background: 'linear-gradient(135deg, #0A0A0B 0%, #1a1a2e 50%, #0f3460 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+        overflow: 'hidden'
+      }}
+      onClick={() => console.log('[GLOBE] Container clicked')}
+    >
+      <div 
+        className="text-center z-10 pointer-events-none px-8"
+        style={{}}
+      >
+        {initError ? (
+          <>
+            <div className="text-terminal-red text-2xl font-bold mb-4">⚠️ GLOBE_ERROR</div>
+            <div className="text-terminal-red/80 text-sm mb-4 font-mono">
+              {initError}
+            </div>
+            <div className="text-terminal-text-secondary text-xs">
+              Check browser console for details
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-terminal-cyan text-2xl font-bold mb-4 animate-pulse">
+              🌐 GLOBE_INITIALIZING 🌐
+            </div>
+            <div className="text-terminal-text-secondary text-sm mb-2">
+              Container: {containerRef.current?.clientWidth}x{containerRef.current?.clientHeight}px
+            </div>
+            <div className="text-terminal-text-secondary text-sm">
+              Stocks: {stocks.length} | Status: {globeReady ? '✓ ACTIVE' : '⊙ LOADING...'}
+            </div>
+            <div className="text-terminal-gold text-xs mt-4 opacity-60">
+              Three.js/globe.gl initializing...
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
