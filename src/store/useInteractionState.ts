@@ -37,7 +37,15 @@ type InteractionState = {
   // Daily macro outlook — a risk-off regime re-themes the dashboard amber.
   macro: MacroOutlook | null;
   setMacro: (outlook: MacroOutlook) => void;
+
+  // Modularity grid: floating split-screen workspace panes spun out from a
+  // pipeline asset or globe node (inline TradingView chart / YouTube analysis).
+  panes: WorkPane[];
+  addPane: (kind: WorkPane['kind'], ticker: string) => void;
+  removePane: (id: string) => void;
 };
+
+export type WorkPane = { id: string; kind: 'chart' | 'video'; ticker: string };
 
 export const useInteractionState = create<InteractionState>((set) => ({
   page: 'globe',
@@ -61,4 +69,14 @@ export const useInteractionState = create<InteractionState>((set) => ({
 
   macro: null,
   setMacro: (outlook) => set({ macro: outlook }),
+
+  panes: [],
+  addPane: (kind, ticker) =>
+    set((s) => {
+      // Dedup one pane per (kind, ticker); cap the split grid at 4 panes.
+      if (s.panes.some(p => p.kind === kind && p.ticker === ticker)) return s;
+      const next = [...s.panes, { id: `${kind}-${ticker}-${Date.now()}`, kind, ticker }];
+      return { panes: next.slice(-4) };
+    }),
+  removePane: (id) => set((s) => ({ panes: s.panes.filter(p => p.id !== id) })),
 }));

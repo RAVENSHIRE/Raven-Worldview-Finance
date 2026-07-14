@@ -4,15 +4,17 @@ import PreMoverScorecard from './components/hud/PreMoverScorecard';
 import GlobeView from './canvas/GlobeView';
 import FlatView from './canvas/FlatView';
 import EquityMonitor from './components/hud/EquityMonitor';
-import LiveFeedSidebar from './components/hud/LiveFeedSidebar';
 import AIChat from './components/hud/AIChat';
-import Mirofish from './components/hud/Mirofish';
 import DeepDive from './components/hud/DeepDive';
 import WatchlistPanel from './components/hud/WatchlistPanel';
 import NodeTooltip from './components/hud/NodeTooltip';
 import PipelineCards from './components/hud/PipelineCards';
 import ValuationModel from './components/hud/ValuationModel';
 import RiskExposurePanel from './components/hud/RiskExposurePanel';
+import WatchlistMatrix from './components/hud/WatchlistMatrix';
+import ResearchHub from './components/hud/ResearchHub';
+import ReportsTerminal from './components/hud/ReportsTerminal';
+import ModularPanes from './components/hud/ModularPanes';
 import ErrorBoundary from './components/ErrorBoundary';
 import { cn } from './lib/utils';
 import {
@@ -22,7 +24,11 @@ import {
   Terminal,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   X,
+  CandlestickChart,
+  Youtube,
+  PanelRightClose,
 } from 'lucide-react';
 import { useMarketState } from './store/useMarketState';
 import { useSpatialState } from './store/useSpatialState';
@@ -51,13 +57,13 @@ const watchlistAsStock = (n: WatchlistNode): StockNode => ({
   lastUpdated: n.lastUpdated,
 });
 
-type Page = 'pipeline' | 'analyst' | 'operational' | 'signals' | 'reports';
+type Page = 'pipeline' | 'analyst' | 'watchlist' | 'research' | 'reports';
 
 const PAGES: { id: Page; label: string }[] = [
   { id: 'pipeline', label: 'PIPELINE' },
   { id: 'analyst', label: 'ANALYST' },
-  { id: 'operational', label: 'OPERATIONAL' },
-  { id: 'signals', label: 'SIGNALS' },
+  { id: 'watchlist', label: 'WATCHLIST' },
+  { id: 'research', label: 'RESEARCH' },
   { id: 'reports', label: 'REPORTS' },
 ];
 
@@ -93,6 +99,11 @@ export default function App() {
   const [command, setCommand] = useState('');
   const [commandStatus, setCommandStatus] = useState<string | null>(null);
   const [layersOpen, setLayersOpen] = useState(false);
+  // Pipeline modularity: foldable rail + monitor. Collapsing the rail
+  // expands the 3D globe container to a full-bleed viewport.
+  const [railOpen, setRailOpen] = useState(true);
+  const [monitorOpen, setMonitorOpen] = useState(true);
+  const addPane = useInteractionState(s => s.addPane);
 
   const watchlistTickers = useMemo(
     () => new Set(watchlistNodes.map(n => n.ticker)),
@@ -381,8 +392,12 @@ export default function App() {
       <div className="flex-1 min-h-0 relative">
 
         {/* PIPELINE — cinematic globe + monitor + watchlist pipeline rail.
-            Kept mounted (hidden) so the WebGL canvas survives page switches. */}
-        <div className={cn("absolute inset-0 grid grid-cols-[1fr_340px]", page !== 'pipeline' && "hidden")}>
+            Kept mounted (hidden) so the WebGL canvas survives page switches.
+            Rail fold collapses the right column → full-bleed globe viewport. */}
+        <div
+          className={cn("absolute inset-0 grid transition-[grid-template-columns] duration-300", page !== 'pipeline' && "hidden")}
+          style={{ gridTemplateColumns: railOpen ? '1fr 340px' : '1fr 0px' }}
+        >
           <div className="flex flex-col min-w-0 min-h-0 overflow-hidden border-r border-terminal-line">
             {/* Globe canvas */}
             <div className="relative flex-1 min-h-0">
@@ -410,6 +425,44 @@ export default function App() {
               </ErrorBoundary>
 
               <NodeTooltip stocks={processedStocks} />
+
+              {/* Modularity grid: floating split-screen workspace panes */}
+              <ModularPanes />
+
+              {/* Spin-out launcher for the focused asset (inline chart / video) */}
+              {selectedStock && (
+                <div className="absolute top-12 left-3 flex items-center gap-1.5 rounded-sm border border-terminal-line bg-terminal-panel/70 backdrop-blur-md px-2 py-1">
+                  <span className="text-[8px] font-black uppercase tracking-widest text-white">{selectedStock.ticker} ::</span>
+                  <button
+                    onClick={() => addPane('chart', selectedStock.ticker)}
+                    className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest text-terminal-cyan hover:text-white transition-colors"
+                  >
+                    <CandlestickChart size={10} /> CHART+
+                  </button>
+                  <span className="text-zinc-800">|</span>
+                  <button
+                    onClick={() => addPane('video', selectedStock.ticker)}
+                    className="flex items-center gap-1 text-[8px] font-black uppercase tracking-widest text-terminal-red hover:text-white transition-colors"
+                  >
+                    <Youtube size={10} /> VIDEO+
+                  </button>
+                </div>
+              )}
+
+              {/* Neon rail fold toggle — low-profile, docked to the seam */}
+              <button
+                onClick={() => setRailOpen(o => !o)}
+                title={railOpen ? 'Collapse pipeline rail (full-bleed globe)' : 'Expand pipeline rail'}
+                className={cn(
+                  "absolute top-1/2 -translate-y-1/2 right-0 z-40 h-14 w-4 flex items-center justify-center",
+                  "rounded-l-sm border border-r-0 transition-all",
+                  railOpen
+                    ? "border-terminal-line text-zinc-600 hover:text-terminal-cyan hover:border-terminal-cyan/60 bg-terminal-panel/80"
+                    : "border-terminal-cyan/60 text-terminal-cyan bg-terminal-cyan/10 shadow-[0_0_12px_rgba(0,240,255,0.35)]"
+                )}
+              >
+                {railOpen ? <ChevronRight size={11} /> : <ChevronLeft size={11} />}
+              </button>
 
               {/* Grid status chip */}
               <div className="absolute top-3 left-3 flex items-center gap-2 border-l-2 border-terminal-cyan bg-black/50 backdrop-blur-sm px-3 py-1.5 pointer-events-none select-none">
@@ -468,22 +521,35 @@ export default function App() {
               </div>
             </div>
 
-            {/* Monitor table under the globe */}
-            <div className="h-52 shrink-0 border-t border-terminal-line bg-terminal-panel/60 flex flex-col">
-              <div className="flex items-center gap-3 px-3 py-1.5 border-b border-terminal-line">
+            {/* Monitor table under the globe — raised 24px (h-52 → 232px) for
+                prominence, foldable down to its header strip. */}
+            <div className={cn(
+              "shrink-0 border-t border-terminal-line bg-terminal-panel/60 flex flex-col transition-[height] duration-300",
+              monitorOpen ? "h-[232px]" : "h-8"
+            )}>
+              <button
+                onClick={() => setMonitorOpen(o => !o)}
+                className="flex items-center gap-3 px-3 py-1.5 border-b border-terminal-line w-full text-left group"
+              >
+                {monitorOpen
+                  ? <ChevronDown size={10} className="text-terminal-cyan" />
+                  : <ChevronRight size={10} className="text-terminal-cyan" />}
                 <Activity size={10} className="text-terminal-cyan" />
                 <span className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan">MONITOR_NODE_ACTIVE</span>
-              </div>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <ErrorBoundary label="EQUITY_MONITOR">
-                  <EquityMonitor
-                    stocks={processedStocks}
-                    onSelectStock={selectAndFocus}
-                    selectedStock={selectedStock}
-                    showSignals
-                  />
-                </ErrorBoundary>
-              </div>
+                <PanelRightClose size={10} className="ml-auto text-zinc-700 group-hover:text-terminal-cyan rotate-90 transition-colors" />
+              </button>
+              {monitorOpen && (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <ErrorBoundary label="EQUITY_MONITOR">
+                    <EquityMonitor
+                      stocks={processedStocks}
+                      onSelectStock={selectAndFocus}
+                      selectedStock={selectedStock}
+                      showSignals
+                    />
+                  </ErrorBoundary>
+                </div>
+              )}
             </div>
           </div>
 
@@ -542,69 +608,53 @@ export default function App() {
           </div>
         )}
 
-        {/* OPERATIONAL — watchlist management + scoring */}
-        {page === 'operational' && (
-          <div className="absolute inset-0 grid grid-cols-[340px_1fr] bg-terminal-bg">
-            <aside className="border-r border-terminal-line bg-terminal-panel p-4 flex flex-col gap-4 overflow-hidden">
-              <div className="flex-1 min-h-0 flex flex-col">
-                <ErrorBoundary label="WATCHLIST">
+        {/* WATCHLIST — unified workspace: dense multi-signal matrix (left +
+            center panes) with the PRE-MOVER WATCHLIST SCORING grid anchored
+            on the right-hand panel. Legacy broadcast feeds stripped. */}
+        {page === 'watchlist' && (
+          <div className="absolute inset-0 grid grid-cols-[1fr_380px] bg-terminal-bg">
+            <main className="overflow-hidden border-r border-terminal-line flex flex-col">
+              <div className="flex-1 min-h-0">
+                <ErrorBoundary label="WATCHLIST_MATRIX">
+                  <WatchlistMatrix
+                    stocks={processedStocks}
+                    watchlistTickers={watchlistTickers}
+                    onSelect={selectAndFocus}
+                    selected={selectedStock}
+                  />
+                </ErrorBoundary>
+              </div>
+              <div className="h-44 shrink-0 border-t border-terminal-line bg-terminal-panel/50 overflow-hidden">
+                <ErrorBoundary label="WATCHLIST_MGMT">
                   <WatchlistPanel onSelect={(n) => {
                     selectAndFocus(watchlistAsStock(n));
                     setPage('pipeline');
                   }} />
                 </ErrorBoundary>
               </div>
-              <div className="shrink-0 border-t border-terminal-line/50 pt-4">
-                <div className="text-[8px] font-black uppercase tracking-widest text-terminal-cyan mb-2">SPATIAL LAYERS</div>
-                <div className="space-y-1.5">
-                  {LAYER_DEFS.map(l => (
-                    <label key={l.key} className="flex items-center gap-2 cursor-pointer group text-[9px]">
-                      <input
-                        type="checkbox"
-                        checked={layers[l.key]}
-                        onChange={() => toggleLayerKey(l.key)}
-                        className="w-3 h-3 accent-[#00f0ff] cursor-pointer"
-                      />
-                      <span className="text-zinc-400 group-hover:text-white transition-colors">{l.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </aside>
-            <main className="overflow-y-auto p-4">
+            </main>
+            <aside className="overflow-y-auto bg-terminal-panel p-3">
               <ErrorBoundary label="SCORECARD">
                 <PreMoverScorecard stocks={processedStocks} />
               </ErrorBoundary>
-            </main>
-          </div>
-        )}
-
-        {/* SIGNALS — live event feed */}
-        {page === 'signals' && (
-          <div className="absolute inset-0 grid grid-cols-[1fr_360px] bg-terminal-bg">
-            <main className="overflow-hidden border-r border-terminal-line p-2">
-              <ErrorBoundary label="EQUITY_MONITOR">
-                <EquityMonitor
-                  stocks={processedStocks}
-                  onSelectStock={selectAndFocus}
-                  selectedStock={selectedStock}
-                  showSignals
-                />
-              </ErrorBoundary>
-            </main>
-            <aside className="overflow-hidden bg-terminal-panel">
-              <ErrorBoundary label="LIVE_FEED">
-                <LiveFeedSidebar events={events} />
-              </ErrorBoundary>
             </aside>
           </div>
         )}
 
-        {/* REPORTS — screening report ingestion + viewer */}
+        {/* RESEARCH — creator uplink + extraction feed + backcheck console */}
+        {page === 'research' && (
+          <div className="absolute inset-0 bg-terminal-bg">
+            <ErrorBoundary label="RESEARCH_HUB">
+              <ResearchHub />
+            </ErrorBoundary>
+          </div>
+        )}
+
+        {/* REPORTS — compressed text-based screening terminal */}
         {page === 'reports' && (
           <div className="absolute inset-0 bg-terminal-bg">
-            <ErrorBoundary label="INTEL_PANEL">
-              <Mirofish selectedStock={selectedStock} />
+            <ErrorBoundary label="REPORTS_TERMINAL">
+              <ReportsTerminal />
             </ErrorBoundary>
           </div>
         )}

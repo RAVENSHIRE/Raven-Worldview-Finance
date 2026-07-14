@@ -54,15 +54,21 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
     if (!containerRef.current) return;
 
     const g = (Globe as any)()(containerRef.current)
-      // Night-mode aesthetic: ultra-dark background + glowing atmosphere
+      // Night-mode aesthetic: NASA Black Marble night-lights imagery under an
+      // ultra-dark background + glowing atmosphere. lat/lon points project via
+      // the same equirectangular mapping as the texture, locking HQ nodes onto
+      // the city-light grid.
+      .globeImageUrl('//unpkg.com/three-globe/example/img/earth-night.jpg')
+      .bumpImageUrl('//unpkg.com/three-globe/example/img/earth-topology.png')
       .backgroundColor('#020408')
       .showGlobe(true)
       .showAtmosphere(true)
       .atmosphereColor('#00FF88')
       .atmosphereAltitude(0.25)
-      // Country landmasses
+      // Country landmasses: near-transparent caps so the Black Marble lights
+      // show through; strokes keep the vector grid aesthetic.
       .polygonsData(COUNTRY_FEATURES)
-      .polygonCapColor(() => 'rgba(15, 25, 35, 0.75)')
+      .polygonCapColor(() => 'rgba(8, 14, 22, 0.28)')
       .polygonSideColor(() => 'rgba(0, 224, 255, 0.04)')
       .polygonStrokeColor(() => 'rgba(0, 255, 136, 0.35)')
       .polygonAltitude(0.008)
@@ -113,9 +119,13 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
         }
       })
       .pointAltitude(0.02)
+      // pointsMerge(true) collapses points into one geometry and silently
+      // disables per-point raycast picking — keep them unmerged so the
+      // scene-pick hover listener always resolves individual node billboards.
+      .pointsMerge(false)
       .pointRadius(d => {
         const stock = d as StockNode;
-        return Math.max(0.25, Math.log10(stock.marketCap / 1e8) * 0.5);
+        return Math.max(0.3, Math.log10(stock.marketCap / 1e8) * 0.5);
       })
       // Hover drives the external glassmorphic NodeTooltip via global state —
       // no built-in HTML label (it would double-render the card).
@@ -171,6 +181,9 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
       if (st.hoveredTicker) st.setHovered(st.hoveredTicker, { x: e.clientX, y: e.clientY });
     };
     containerRef.current.addEventListener('mousemove', trackMouse);
+    // Leaving the canvas must never strand a hover card on screen.
+    const clearHover = () => useInteractionState.getState().setHovered(null);
+    containerRef.current.addEventListener('mouseleave', clearHover);
 
     const handleResize = () => {
       if (containerRef.current) {
@@ -185,6 +198,7 @@ export default function GlobeViewport({ stocks, events, activeLayers, onSelectSt
     return () => {
       window.removeEventListener('resize', handleResize);
       mountEl?.removeEventListener('mousemove', trackMouse);
+      mountEl?.removeEventListener('mouseleave', clearHover);
       g?._destructor?.();
     };
   }, []);

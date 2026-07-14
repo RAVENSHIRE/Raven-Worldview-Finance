@@ -10,6 +10,8 @@ import { createClient } from 'redis';
 import crypto from 'crypto';
 import { createIngestPipeline } from './workers/ingest';
 import { createMacroWorker } from './workers/macro';
+import { createZurichSnapshotWorker } from './workers/zurichSnapshots';
+import { createMediaTranscriptionEngine } from './services/mediaTranscriptionEngine';
 
 // ─── TYPES ──────────────────────────────────────────────────────────────────
 interface ConnectedClient {
@@ -666,6 +668,83 @@ async function startServer() {
     }
   });
 
+  // ── Historical Price Series (12M daily) + Quant Matrix ──
+  // Data-normalization wrapper: Yahoo chart rows arrive with mixed Date
+  // objects / epoch strings and occasional null closes. Everything is coerced,
+  // filtered and sorted here so the topography chart never sees unaligned
+  // timestamps.
+  const historyCache = new Map<string, { rows: { date: string; price: number }[]; at: number }>();
+  const HISTORY_TTL_MS = 10 * 60_000;
+
+  async function fetchNormalizedHistory(ticker: string): Promise<{ date: string; price: number }[]> {
+    const hit = historyCache.get(ticker);
+    if (hit && Date.now() - hit.at < HISTORY_TTL_MS) return hit.rows;
+
+    const end = new Date();
+    const start = new Date(end.getTime() - 370 * 86_400_000);
+    const chart: any = await yahooFinance.chart(ticker, { period1: start, period2: end, interval: '1d' });
+    const quotes: any[] = chart?.quotes ?? [];
+
+    const rows = quotes
+      .map((q: any) => {
+        const raw = q?.date ?? q?.timestamp;
+        const t = raw instanceof Date ? raw : new Date(typeof raw === 'number' ? raw * (raw < 1e12 ? 1000 : 1) : raw);
+        const price = Number(q?.adjclose ?? q?.close);
+        if (Number.isNaN(t.getTime()) || !Number.isFinite(price) || price <= 0) return null;
+        return { date: t.toISOString().slice(0, 10), price: Number(price.toFixed(4)) };
+      })
+      .filter((r): r is { date: string; price: number } => r !== null)
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+
+    historyCache.set(ticker, { rows, at: Date.now() });
+    return rows;
+  }
+
+  app.get('/api/market/history/:ticker', async (req, res) => {
+    const ticker = req.params.ticker.trim().toUpperCase();
+    try {
+      const rows = await fetchNormalizedHistory(ticker);
+      res.json(rows);
+    } catch (e: any) {
+      const msg = String(e?.message ?? '');
+      if (/not found|delisted|no data|404/i.test(msg)) {
+        return res.status(404).json({ error: 'INVALID_OR_DELISTED_SYMBOL' });
+      }
+      res.status(502).json({ error: 'HISTORY_UPSTREAM_ERROR', details: msg });
+    }
+  });
+
+  // Institutional quant matrix: 50/200-DMA and 52-week positioning per symbol,
+  // derived from the normalized 12M series (batch, best-effort per symbol).
+  app.get('/api/quant', async (req, res) => {
+    const symbols = String(req.query.symbols || '')
+      .split(',').map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 40);
+    if (symbols.length === 0) return res.status(400).json({ error: 'SYMBOLS_REQUIRED' });
+
+    const out: Record<string, { dma50: number; dma200: number; pctFrom52wHigh: number; pctFrom52wLow: number }> = {};
+    await Promise.all(symbols.map(async t => {
+      try {
+        const rows = await fetchNormalizedHistory(t);
+        if (rows.length < 10) return;
+        const closes = rows.map(r => r.price);
+        const last = closes[closes.length - 1];
+        const avg = (n: number) => {
+          const s = closes.slice(-n);
+          return s.reduce((a, b) => a + b, 0) / s.length;
+        };
+        const hi52 = Math.max(...closes);
+        const lo52 = Math.min(...closes);
+        out[t] = {
+          dma50: Number(avg(50).toFixed(2)),
+          dma200: Number(avg(200).toFixed(2)),
+          pctFrom52wHigh: Number(((last / hi52 - 1) * 100).toFixed(1)),
+          pctFrom52wLow: Number(((last / lo52 - 1) * 100).toFixed(1)),
+        };
+      } catch { /* per-symbol best effort */ }
+    }));
+    res.json(out);
+  });
+
   // ── Screening Report Routes ──
   const previewOf = (text: string): string =>
     (text.split('\n').find(l => l.trim().length > 0) || '').slice(0, 120);
@@ -733,6 +812,73 @@ async function startServer() {
   });
 
   // ── Watchlist Routes ──
+  // ── Research Layer: creator tracking + extraction audit loop ──
+  const media = createMediaTranscriptionEngine({
+    redis: redisCache,
+    broadcast: (p) => registry.broadcast(p),
+  });
+  media.start();
+
+  app.get('/api/research/creators', (_req, res) => res.json(media.listCreators()));
+
+  app.post('/api/research/creators', async (req, res) => {
+    const { platform, handle } = req.body ?? {};
+    if (!['youtube', 'tradingview', 'twitter'].includes(platform)) {
+      return res.status(400).json({ error: 'INVALID_PLATFORM', allowed: ['youtube', 'tradingview', 'twitter'] });
+    }
+    if (typeof handle !== 'string' || !handle.trim()) {
+      return res.status(400).json({ error: 'HANDLE_REQUIRED' });
+    }
+    res.status(201).json(await media.addCreator(platform, handle));
+  });
+
+  app.delete('/api/research/creators/:id', async (req, res) => {
+    const removed = await media.removeCreator(req.params.id);
+    if (!removed) return res.status(404).json({ error: 'CREATOR_NOT_FOUND' });
+    res.json({ ok: true });
+  });
+
+  app.get('/api/research/extractions', (req, res) => {
+    const limit = Math.min(parseInt(String(req.query.limit || '50'), 10) || 50, 200);
+    res.json(media.listExtractions(limit));
+  });
+
+  app.post('/api/research/extractions/:id/audit', async (req, res) => {
+    const note = req.body?.note;
+    if (typeof note !== 'string' || !note.trim()) return res.status(400).json({ error: 'NOTE_REQUIRED' });
+    const rec = await media.addAudit(req.params.id, note);
+    if (!rec) return res.status(404).json({ error: 'EXTRACTION_NOT_FOUND' });
+    res.json(rec);
+  });
+
+  app.post('/api/research/poll', async (_req, res) => {
+    await media.pollAll();
+    res.json({ ok: true, extractions: media.listExtractions(10).length });
+  });
+
+  // ── Zurich Time Cron Engine (09:00 SIX open · 15:30 US open, Europe/Zurich) ──
+  const publishSnapshotReport = async (report: { id: string; text: string; source?: string; capturedAt: string }) => {
+    await screens.saveReport(report);
+    const meta = { ...report, preview: previewOf(report.text) };
+    try {
+      await redisCache.publish('raven:screen', JSON.stringify({ type: 'SCREEN_REPORT', payload: meta }));
+    } catch {
+      registry.broadcast({ type: 'SCREEN_REPORT', payload: meta }, 'raven:screen');
+    }
+  };
+
+  const zurich = createZurichSnapshotWorker({ yahooFinance, publishReport: publishSnapshotReport });
+  zurich.start();
+
+  app.post('/api/snapshot/run', async (req, res) => {
+    const kind = req.body?.kind === 'six-open' ? 'six-open' : 'us-open';
+    try {
+      res.json({ ok: true, kind, text: await zurich.runSnapshot(kind) });
+    } catch (e: any) {
+      res.status(502).json({ error: 'SNAPSHOT_FAILED', details: e?.message });
+    }
+  });
+
   const broadcastWatchlist = async (payload: object) => {
     try {
       await redisCache.publish('raven:watchlist', JSON.stringify(payload));
